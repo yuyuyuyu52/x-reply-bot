@@ -58,30 +58,24 @@ if x_tab:
 else:
     fresh_tab = new_tab(url)
     switch_tab(fresh_tab)
-
-def ensure_target_page():
-    info = page_info()
-    if info.get('dialog'):
-        fresh = new_tab(url)
-        switch_tab(fresh)
-        wait_for_load(20)
-        wait(4)
-        info = page_info()
-    if (info.get('url') or '').startswith(url):
-        return info
+info_before = page_info()
+if info_before.get('dialog'):
     fresh = new_tab(url)
     switch_tab(fresh)
     wait_for_load(20)
     wait(4)
-    info = page_info()
-    if (info.get('url') or '').startswith(url):
-        return info
+    info_before = page_info()
+if not (info_before.get('url') or '').startswith(url):
+    fresh = new_tab(url)
+    switch_tab(fresh)
+    wait_for_load(20)
+    wait(4)
+    info_before = page_info()
+if not (info_before.get('url') or '').startswith(url):
     goto(url)
     wait_for_load(20)
     wait(4)
-    return page_info()
-
-info_before = ensure_target_page()
+    info_before = page_info()
 if not (info_before.get('url') or '').startswith(url):
     print(json.dumps({{'ok': False, 'reason': 'wrong_url', 'page_info': info_before}}, ensure_ascii=False))
 else:

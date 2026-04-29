@@ -36,15 +36,23 @@ posted_shot = {json.dumps(str(posted_shot))}
 tabs = list_tabs(include_chrome=False)
 x_tab = None
 for t in tabs:
-    if 'x.com' in t.get('url', ''):
+    tab_url = t.get('url', '')
+    if 'x.com/home' in tab_url:
         x_tab = t
         break
 if x_tab:
     switch_tab(x_tab['targetId'])
-    goto('https://x.com/home')
 else:
     tid = new_tab('https://x.com/home')
     switch_tab(tid)
+
+current = page_info()
+if current.get('dialog'):
+    tid = new_tab('https://x.com/home')
+    switch_tab(tid)
+    current = page_info()
+if 'x.com/home' not in (current.get('url') or ''):
+    goto('https://x.com/home')
 
 wait_for_load(20)
 wait(4)
@@ -124,7 +132,7 @@ else:
             wait(4)
             posted_url = js("""
 (() => {{
-  const snippet = match_snippet;
+  const snippet = %s;
   const articles = Array.from(document.querySelectorAll('article'));
   for (const article of articles) {{
     const text = article.innerText || '';
@@ -141,7 +149,7 @@ else:
   }}
   return '';
 }})()
-""") or ''
+""" % {json.dumps(match_snippet, ensure_ascii=False)}) or ''
         print(json.dumps({{
             'ok': sent_ok,
             'text': post_text,

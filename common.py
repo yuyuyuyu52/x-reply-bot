@@ -732,7 +732,7 @@ def run_harness(code: str, timeout: int = 75) -> str:
         err = f"browser-harness exited {proc.returncode}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
         errors.append(err)
         lower = f"{proc.stdout}\n{proc.stderr}".lower()
-        retryable = any(
+        retryable = proc.returncode < 0 or any(
             marker in lower
             for marker in [
                 "websocket connection closed",

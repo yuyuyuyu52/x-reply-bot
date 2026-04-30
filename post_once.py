@@ -65,6 +65,19 @@ def notify_text(record: dict) -> str:
     return text
 
 
+def notify_telegram(record: dict, stamp: str) -> None:
+    if not telegram_enabled():
+        return
+    try:
+        tg_resp = telegram_notify(notify_text(record))
+        record["telegram_notify"] = {"ok": True, "response": tg_resp}
+    except Exception as exc:
+        record["telegram_notify"] = {"ok": False, "error": str(exc)}
+        print(f"TELEGRAM_NOTIFY_ERROR: {exc}")
+    write_json(LATEST_POST_RUN_PATH, record)
+    write_json(post_history_path_for(stamp), record)
+
+
 def topic_extra_update(status: str, stamp: str, dry_run: bool) -> dict:
     data = {
         "last_seen_at": stamp,
@@ -155,8 +168,7 @@ def main() -> int:
                 )
             write_json(LATEST_POST_RUN_PATH, record)
             write_json(post_history_path_for(stamp), record)
-            if telegram_enabled():
-                telegram_notify(notify_text(record))
+            notify_telegram(record, stamp)
             print(json.dumps(record, ensure_ascii=False, indent=2))
             return 0 if args.dry_run else 1
 
@@ -164,8 +176,7 @@ def main() -> int:
             record["status"] = "dry_run_ready"
             write_json(LATEST_POST_RUN_PATH, record)
             write_json(post_history_path_for(stamp), record)
-            if telegram_enabled():
-                telegram_notify(notify_text(record))
+            notify_telegram(record, stamp)
             print(json.dumps(record, ensure_ascii=False, indent=2))
             return 0
 
@@ -193,8 +204,10 @@ def main() -> int:
 
         write_json(LATEST_POST_RUN_PATH, record)
         write_json(post_history_path_for(stamp), record)
-        if telegram_enabled():
-            telegram_notify(notify_text(record))
+        # HIGH-5: TG 失败一定不能让本函数抛/返回非 0。post_send 已成功的情况下，
+        # 上抛会让 bot_daemon 把整次当作"发送失败"再发一条失败通知，引导用户重发，
+        # 但实际帖子已经发出去 → 重发风险。所以独立 try/except，结果写进 record。
+        notify_telegram(record, stamp)
         print(json.dumps(record, ensure_ascii=False, indent=2))
         return 0 if send.returncode == 0 else 1
     finally:

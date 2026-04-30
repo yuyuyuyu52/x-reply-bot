@@ -116,9 +116,12 @@ def chat_json_result(
     retry_messages = list(messages)
     retry_temperature = temperature
     retry_max_tokens = max_tokens
-    for attempt in range(retries + 1):
-        result = chat_text_result(retry_messages, temperature=retry_temperature, max_tokens=retry_max_tokens)
+    for _ in range(retries + 1):
+        # chat_text_result raises on thinking-only / empty responses; that has
+        # to live inside the try so retries can grow the budget instead of
+        # bubbling the first failure up to post_once and crashing the run.
         try:
+            result = chat_text_result(retry_messages, temperature=retry_temperature, max_tokens=retry_max_tokens)
             return result, parse_json_object(result["content"])
         except Exception as exc:
             last_error = exc
@@ -129,7 +132,12 @@ def chat_json_result(
                 }
             ]
             retry_temperature = min(retry_temperature, 0.4)
-            retry_max_tokens = min(2000, max(retry_max_tokens + 300, retry_max_tokens))
+            # Reasoning models burn the budget on thinking; on
+            # LLM_BUDGET_EXHAUSTED double, otherwise grow modestly. Cap at 8000.
+            if "LLM_BUDGET_EXHAUSTED" in str(exc):
+                retry_max_tokens = min(8000, max(retry_max_tokens * 2, 2048))
+            else:
+                retry_max_tokens = min(8000, retry_max_tokens + 500)
     if last_error:
         raise last_error
     raise RuntimeError("chat_json_result failed without an exception")
@@ -304,12 +312,16 @@ def generate_post_plan(topic: dict) -> dict:
     rerank_reason = str(rerank_payload.get("reason") or "").strip().replace("\n", " ")
     selected_candidate = next((item for item in candidates if item["index"] == selected_index), None)
 
-    review_usage = {}
-    review_cost = {}
+    # Use shaped zeros instead of empty dicts so persisted records have a
+    # consistent schema across stages (review-only / rewrite-also paths).
+    empty_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    empty_cost = {"total_cost": 0.0}
+    review_usage = dict(empty_usage)
+    review_cost = dict(empty_cost)
     review_reason = ""
     review_rewrite_hint = ""
-    rewrite_usage = {}
-    rewrite_cost = {}
+    rewrite_usage = dict(empty_usage)
+    rewrite_cost = dict(empty_cost)
     rewritten = False
     best_candidate = selected_candidate
     review_pass = bool(selected_candidate)

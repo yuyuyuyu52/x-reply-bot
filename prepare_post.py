@@ -200,7 +200,7 @@ if current.get('dialog'):
     switch_tab(tid)
     current = page_info()
 if 'x.com/home' not in (current.get('url') or ''):
-    goto('https://x.com/home')
+    goto_url('https://x.com/home')
 
 wait_for_load(20)
 wait(5)
@@ -310,13 +310,13 @@ if current.get('dialog'):
     switch_tab(tid)
     current = page_info()
 if not (current.get('url') or '').startswith(url):
-    goto(url)
+    goto_url(url)
     wait_for_load(20)
     wait(5)
 
 detail_info = page_info()
 detail = js(detail_js) or []
-shot = screenshot(shot_path)
+shot = capture_screenshot(shot_path)
 out = {{
     'ok': True,
     'url': url,

@@ -215,7 +215,7 @@ if current.get('dialog'):
     switch_tab(tid)
     current = page_info()
 
-goto('https://x.com/home')
+goto_url('https://x.com/home')
 wait_for_load(20)
 wait(4)
 js('window.scrollTo(0, 0)')
@@ -430,7 +430,7 @@ def dedupe_selected(selected: list[dict]) -> list[dict]:
 def analyze_candidates(candidates: list[dict]) -> dict:
     primary_error: Exception | None = None
     try:
-        return analyze_candidates_once(candidates, max_tokens=1400)
+        return analyze_candidates_once(candidates, max_tokens=3000)
     except Exception as exc:
         primary_error = exc
         if len(candidates) <= 4:
@@ -441,7 +441,7 @@ def analyze_candidates(candidates: list[dict]) -> dict:
     chunks = [candidates[idx : idx + 4] for idx in range(0, len(candidates), 4)]
     for chunk in chunks:
         try:
-            chunk_results.append(analyze_candidates_once(chunk, max_tokens=950))
+            chunk_results.append(analyze_candidates_once(chunk, max_tokens=3000))
         except Exception:
             failed_chunks += 1
 

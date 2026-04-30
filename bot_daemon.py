@@ -46,8 +46,21 @@ def format_kv(icon: str, label: str, value) -> str:
 
 def log(message: str) -> None:
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    with LOG_PATH.open("a", encoding="utf-8") as fh:
-        fh.write(f"[{timestamp}] {message}\n")
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
+
+
+def _safe_notify(text: str) -> None:
+    if not telegram_enabled():
+        return
+    try:
+        telegram_notify(text)
+    except Exception as exc:
+        log(f"telegram_notify failed: {exc}")
 
 
 def tg_api(method: str, params: dict | None = None, timeout: int = 30) -> dict:
@@ -345,30 +358,33 @@ def handle_command(
     run_trigger: str,
     active_label: str,
 ) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, str, str]:
-    command = (text or "").strip().split()[0].lower()
+    stripped = (text or "").strip()
+    if not stripped:
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+    command = stripped.split()[0].lower()
     if command.startswith("/run"):
         if run_proc and run_proc.poll() is None:
-            telegram_notify("⏳ 当前已有任务在执行。")
+            _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
-        telegram_notify("💬 回复\n\n✅ 已收到 /run，开始执行。")
+        _safe_notify("💬 回复\n\n✅ 已收到 /run，开始执行。")
         return start_job("run_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, "telegram", "run_once.py"
 
     if command.startswith("/status"):
-        telegram_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, active_label))
+        _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, active_label))
         return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
 
     if command.startswith("/post_once"):
         if run_proc and run_proc.poll() is None:
-            telegram_notify("⏳ 当前已有任务在执行。")
+            _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
-        telegram_notify("📝 主动发帖\n\n✅ 已收到 /post_once，开始执行。")
+        _safe_notify("📝 主动发帖\n\n✅ 已收到 /post_once，开始执行。")
         return start_job("post_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, "telegram", "post_once.py"
 
     if command.startswith("/post_dry_run"):
         if run_proc and run_proc.poll() is None:
-            telegram_notify("⏳ 当前已有任务在执行。")
+            _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
-        telegram_notify("📝 主动发帖\n\n🧪 已收到 /post_dry_run，开始生成候选但不会发送。")
+        _safe_notify("📝 主动发帖\n\n🧪 已收到 /post_dry_run，开始生成候选但不会发送。")
         return (
             subprocess.Popen(
                 [sys.executable, str(ROOT / "post_once.py"), "--trigger", "telegram", "--dry-run"],
@@ -385,18 +401,18 @@ def handle_command(
         )
 
     if command.startswith("/post_status"):
-        telegram_notify(post_summary(next_post_run_at))
+        _safe_notify(post_summary(next_post_run_at))
         return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
 
     if command.startswith("/learn_status"):
-        telegram_notify(learning_summary(next_learn_at))
+        _safe_notify(learning_summary(next_learn_at))
         return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
 
     if command.startswith("/learn_once"):
         if run_proc and run_proc.poll() is None:
-            telegram_notify("⏳ 当前已有任务在执行。")
+            _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
-        telegram_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
+        _safe_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
         return start_job("observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, "telegram", "observe_feed.py"
 
     return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
@@ -425,22 +441,30 @@ def poll_updates(
     for item in results:
         update_id = int(item.get("update_id", 0))
         new_offset = max(new_offset, update_id + 1)
-        message = item.get("message") or {}
-        chat = message.get("chat") or {}
-        text = str(message.get("text") or "")
-        if str(chat.get("id") or "") != allowed_chat:
-            continue
-        run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label = handle_command(
-            text,
-            run_proc,
-            next_run_at,
-            next_post_run_at,
-            next_learn_at,
-            run_trigger,
-            active_label,
-        )
-    if new_offset != state.get("update_offset", 0):
-        write_tg_state({"update_offset": new_offset})
+        try:
+            message = item.get("message") or {}
+            chat = message.get("chat") or {}
+            text = str(message.get("text") or "")
+            if str(chat.get("id") or "") != allowed_chat:
+                continue
+            run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label = handle_command(
+                text,
+                run_proc,
+                next_run_at,
+                next_post_run_at,
+                next_learn_at,
+                run_trigger,
+                active_label,
+            )
+        except Exception as exc:
+            log(f"telegram update {update_id} handler error: {exc}")
+        finally:
+            if new_offset != state.get("update_offset", 0):
+                try:
+                    write_tg_state({"update_offset": new_offset})
+                    state["update_offset"] = new_offset
+                except Exception as exc:
+                    log(f"telegram offset persist failed: {exc}")
     return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
 
 

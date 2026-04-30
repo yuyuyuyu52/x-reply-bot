@@ -52,7 +52,7 @@ if current.get('dialog'):
     switch_tab(tid)
     current = page_info()
 if 'x.com/home' not in (current.get('url') or ''):
-    goto('https://x.com/home')
+    goto_url('https://x.com/home')
 
 wait_for_load(20)
 wait(4)
@@ -97,7 +97,7 @@ pos = js("""
 if not pos.get('ok'):
     print(json.dumps({{'ok': False, 'reason': 'no composer', 'page_info': page_info()}}, ensure_ascii=False))
 else:
-    click(pos['x'], pos['y'])
+    click_at_xy(pos['x'], pos['y'])
     wait(0.5)
     type_text(post_text)
     wait(1)
@@ -107,7 +107,7 @@ else:
   return el ? el.innerText : '';
 }})()
 """) or ''
-    screenshot(ready_shot)
+    capture_screenshot(ready_shot)
     if post_text not in composer:
         print(json.dumps({{'ok': False, 'reason': 'composer_mismatch', 'composer': composer}}, ensure_ascii=False))
     else:
@@ -123,24 +123,39 @@ else:
 """) or {{}}
         wait(6)
         body = js('document.body.innerText') or ''
-        screenshot(posted_shot)
+        capture_screenshot(posted_shot)
         sent_ok = ('你的帖子已发送' in body) or ('Your post was sent' in body)
         posted_url = ''
         if profile_url:
-            goto(profile_url)
+            goto_url(profile_url)
             wait_for_load(20)
             wait(4)
             posted_url = js("""
 (() => {{
+  // Prefer the timeline's first article: the just-posted tweet is always at
+  // the top of the user's own profile timeline. Falling back to a 30-char
+  // text-snippet match is unreliable because X truncates timeline tweets to
+  // ~100 chars + "Show more", and DOM whitespace can shift the snippet edge.
   const snippet = %s;
   const articles = Array.from(document.querySelectorAll('article'));
+  function statusLinks(article) {{
+    return Array.from(article.querySelectorAll('a[href*="/status/"]'))
+      .map((link) => link.href || '')
+      .filter(Boolean)
+      .map((href) => href.replace(/\\/analytics$/, ''))
+      .filter((href) => /\\/status\\/\\d+$/.test(href));
+  }}
+  if (articles.length) {{
+    const first = statusLinks(articles[0]);
+    if (first.length) {{
+      first.sort((a, b) => a.length - b.length);
+      return first[0];
+    }}
+  }}
   for (const article of articles) {{
     const text = article.innerText || '';
     if (text.includes(snippet)) {{
-      const links = Array.from(article.querySelectorAll('a[href*="/status/"]'))
-        .map((link) => link.href || '')
-        .filter(Boolean)
-        .map((href) => href.replace(/\\/analytics$/, ''));
+      const links = statusLinks(article);
       if (links.length) {{
         links.sort((a, b) => a.length - b.length);
         return links[0];
@@ -150,13 +165,22 @@ else:
   return '';
 }})()
 """ % {json.dumps(match_snippet, ensure_ascii=False)}) or ''
+        # Don't echo body (full timeline scrape, ~9 KB, contains other users'
+        # posts/ads — privacy + bloat). Persist the boolean we actually use,
+        # plus a tiny snippet bounded to the success-marker line for debugging.
+        sent_marker = ''
+        for marker in ('你的帖子已发送', 'Your post was sent'):
+            idx = body.find(marker)
+            if idx >= 0:
+                sent_marker = body[max(0, idx - 20):idx + len(marker) + 40]
+                break
         print(json.dumps({{
             'ok': sent_ok,
             'text': post_text,
             'url': posted_url,
             'profile_url': profile_url,
             'click_result': clicked,
-            'body_start': body[:1200],
+            'sent_marker': sent_marker,
             'page_info': page_info()
         }}, ensure_ascii=False, indent=2))
 '''

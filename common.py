@@ -26,16 +26,34 @@ DAILY_REPORT_STATE_PATH = STATE_DIR / "daily_report_state.json"
 ENV_PATH = ROOT / ".env"
 VALID_POST_TOPIC_TYPES = {"news_react", "story", "argument", "casual"}
 
-BROWSER_HARNESS = os.environ.get(
-    "BROWSER_HARNESS_BIN",
-    "/home/will/.local/bin/browser-harness",
-)
-BROWSER_HARNESS_ROOT = Path("/home/will/Developer/browser-harness")
-CDP_URLS = [
-    os.environ.get("X_REPLY_CDP_URL", "").strip(),
-    "http://127.0.0.1:9222",
-    "http://10.0.0.175:9223",
-]
+def browser_harness_bin() -> str:
+    return os.environ.get(
+        "BROWSER_HARNESS_BIN",
+        "/home/will/.local/bin/browser-harness",
+    )
+
+
+def browser_harness_root() -> Path:
+    return Path(
+        os.environ.get(
+            "BROWSER_HARNESS_ROOT",
+            "/home/will/Developer/browser-harness",
+        )
+    )
+
+
+def cdp_urls() -> list[str]:
+    return [
+        os.environ.get("X_REPLY_CDP_URL", "").strip(),
+        "http://127.0.0.1:9222",
+        "http://10.0.0.175:9223",
+    ]
+
+
+# Backwards-compat aliases (lazy evaluation now happens at call time)
+BROWSER_HARNESS = browser_harness_bin()
+BROWSER_HARNESS_ROOT = browser_harness_root()
+CDP_URLS = cdp_urls()
 
 
 def ensure_state_dirs() -> None:
@@ -292,14 +310,26 @@ def anthropic_completion(
             }
         )
 
+    effective_max_tokens = int(max_tokens or 2048)
     payload: dict = {
         "model": model_name(),
         "messages": converted_messages,
         "temperature": temperature,
-        "max_tokens": int(max_tokens or 2048),
+        "max_tokens": effective_max_tokens,
     }
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
+
+    # Reasoning models (e.g. MiniMax-M2.x via /anthropic) eat the entire
+    # max_tokens budget on thinking blocks if no thinking cap is set, leaving
+    # zero room for the text block we actually want. Cap thinking to half the
+    # budget (max 4096) so text always has headroom. Skip when budget is small
+    # (<1024) since callers there expect short factual JSON, not deep reasoning.
+    if effective_max_tokens >= 1024:
+        payload["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": min(effective_max_tokens // 2, 4096),
+        }
 
     return post_json_with_retries(
         url,
@@ -398,6 +428,12 @@ def chat_text_result(
     max_tokens: int | None = None,
 ) -> dict:
     data = chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
+    # Anthropic uses `stop_reason`, OpenAI uses `choices[0].finish_reason`.
+    # Normalize so the fall-through error message is meaningful in both modes.
+    stop_reason = str(data.get("stop_reason") or "").strip()
+    if not stop_reason:
+        first_choice = (data.get("choices") or [{}])[0]
+        stop_reason = str(first_choice.get("finish_reason") or "").strip()
     if provider_mode() == "anthropic":
         content_blocks = data.get("content") or []
         content = "\n".join(
@@ -405,16 +441,34 @@ def chat_text_result(
             for block in content_blocks
             if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text") or "").strip()
         ).strip()
+        # Distinguish thinking-only truncation (model burned the whole budget on
+        # reasoning before emitting any text) from a generic empty response.
+        # Specific message lets caller retry with a larger budget instead of
+        # giving up. Don't dump `data` — thinking blocks may contain prompt echo.
+        if not content:
+            has_thinking = any(
+                isinstance(block, dict) and block.get("type") == "thinking"
+                for block in content_blocks
+            )
+            if has_thinking and stop_reason == "max_tokens":
+                raise RuntimeError(
+                    "LLM_BUDGET_EXHAUSTED: thinking-only response, "
+                    f"stop_reason=max_tokens id={data.get('id')} model={data.get('model')}"
+                )
     else:
         choices = data.get("choices") or []
         if not choices:
-            raise RuntimeError(f"No choices in response: {data}")
+            raise RuntimeError(
+                f"No choices in response: id={data.get('id')} model={data.get('model')}"
+            )
         message = choices[0].get("message") or {}
         content = (message.get("content") or "").strip()
         if content:
             content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.S).strip()
     if not content:
-        raise RuntimeError(f"Empty model response: {data}")
+        raise RuntimeError(
+            f"Empty model response: id={data.get('id')} stop_reason={stop_reason} model={data.get('model')}"
+        )
     usage = extract_usage(data)
     return {
         "content": content,
@@ -454,8 +508,9 @@ def chat_json_result(
             }
         except Exception as exc:
             last_error = exc
+            exc_str = str(exc)
             extra_instruction = "上一次输出不是合法、完整、闭合的 JSON。现在只输出一个 JSON 对象，不要 markdown，不要解释，不要额外文本。"
-            if "Could not find JSON object" in str(exc) or "JSONDecodeError" in str(exc) or "Expecting" in str(exc):
+            if "Could not find JSON object" in exc_str or "JSONDecodeError" in exc_str or "Expecting" in exc_str:
                 extra_instruction += " 控制字段长度，优先简洁，确保 JSON 完整闭合。字符串内部不要再出现未转义双引号。"
             if result and result.get("content"):
                 retry_messages = list(messages) + [
@@ -476,7 +531,13 @@ def chat_json_result(
                     }
                 ]
             retry_temperature = min(retry_temperature, 0.35)
-            retry_max_tokens = min(2800, retry_max_tokens + 500)
+            # On budget exhaustion (reasoning model burned all tokens on thinking)
+            # double the budget so text has room next time. On JSON parse errors,
+            # grow modestly. Cap at 8000 to bound cost.
+            if "LLM_BUDGET_EXHAUSTED" in exc_str:
+                retry_max_tokens = min(8000, max(retry_max_tokens * 2, 2048))
+            else:
+                retry_max_tokens = min(8000, retry_max_tokens + 500)
 
     if last_error:
         raise last_error
@@ -675,7 +736,7 @@ def resolve_ws() -> str:
     if os.environ.get("BU_CDP_WS"):
         return os.environ["BU_CDP_WS"]
     errors = []
-    for base in [u for u in CDP_URLS if u]:
+    for base in [u for u in cdp_urls() if u]:
         try:
             with urllib.request.urlopen(f"{base.rstrip('/')}/json/version", timeout=5) as resp:
                 payload = json.loads(resp.read())
@@ -686,15 +747,16 @@ def resolve_ws() -> str:
 
 
 def restart_harness_daemon(name: str = "x-reply-bot") -> None:
+    harness_root = browser_harness_root()
     script = (
         "import sys; "
-        f"sys.path.insert(0, {json.dumps(str(BROWSER_HARNESS_ROOT))}); "
+        f"sys.path.insert(0, {json.dumps(str(harness_root))}); "
         "from admin import restart_daemon; "
         f"restart_daemon({json.dumps(name)})"
     )
     subprocess.run(
         ["python3", "-c", script],
-        cwd=str(BROWSER_HARNESS_ROOT),
+        cwd=str(harness_root),
         capture_output=True,
         text=True,
         timeout=30,
@@ -708,14 +770,30 @@ def run_harness(code: str, timeout: int = 75) -> str:
         env = os.environ.copy()
         env["BU_CDP_WS"] = resolve_ws()
         env.setdefault("BU_NAME", "x-reply-bot")
+        # Strip proxies from the *child* env only. browser-harness opens a
+        # websocket to local/LAN CDP; if a SOCKS proxy is exported, the
+        # websockets lib tries to tunnel CDP through it and fails with
+        # "requires python-socks". The outer Python's proxy env is preserved
+        # so chat_completion etc. can still reach LLM endpoints via proxy.
+        for proxy_var in (
+            "ALL_PROXY", "all_proxy",
+            "HTTPS_PROXY", "https_proxy",
+            "HTTP_PROXY", "http_proxy",
+            "SOCKS_PROXY", "socks_proxy",
+        ):
+            env.pop(proxy_var, None)
+        env.setdefault("NO_PROXY", "127.0.0.1,localhost,10.0.0.175")
+        env.setdefault("no_proxy", "127.0.0.1,localhost,10.0.0.175")
         try:
+            # browser-harness on this host requires `-c "code"` form;
+            # piping via stdin makes it print its usage and exit 1.
             proc = subprocess.run(
-                [BROWSER_HARNESS],
-                input=code,
+                [browser_harness_bin(), "-c", code],
+                input="",
                 text=True,
                 capture_output=True,
                 env=env,
-                cwd="/home/will/Developer/browser-harness",
+                cwd=str(browser_harness_root()),
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:

@@ -72,7 +72,7 @@ if not (info_before.get('url') or '').startswith(url):
     wait(4)
     info_before = page_info()
 if not (info_before.get('url') or '').startswith(url):
-    goto(url)
+    goto_url(url)
     wait_for_load(20)
     wait(4)
     info_before = page_info()
@@ -99,7 +99,7 @@ else:
   return {{x:r.left + Math.min(80, r.width / 2), y:r.top + r.height / 2}};
 }})()
 ''')
-        click(pos['x'], pos['y'])
+        click_at_xy(pos['x'], pos['y'])
         wait(0.5)
         type_text(reply_text)
         wait(1)
@@ -109,7 +109,7 @@ else:
   return el ? el.innerText : '';
 }})()
 ''') or ''
-        screenshot(ready_shot)
+        capture_screenshot(ready_shot)
         if reply_text not in composer:
             print(json.dumps({{'ok': False, 'reason': 'composer_mismatch', 'composer': composer}}, ensure_ascii=False))
         else:
@@ -125,7 +125,7 @@ else:
 ''')
             wait(6)
             body = js('document.body.innerText') or ''
-            screenshot(posted_shot)
+            capture_screenshot(posted_shot)
             ok = ('你的帖子已发送' in body) or (reply_text in body)
             print(json.dumps({{
                 'ok': ok,

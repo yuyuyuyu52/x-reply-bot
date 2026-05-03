@@ -18,6 +18,7 @@ COMMANDS = [
     {"command": "post_status", "description": "查看主动发帖状态"},
     {"command": "learn_once", "description": "立即观察学习一轮"},
     {"command": "learn_status", "description": "查看观察学习状态"},
+    {"command": "event", "description": "记录一件近期发生的事，供发帖时参考"},
 ]
 
 SCOPES = [

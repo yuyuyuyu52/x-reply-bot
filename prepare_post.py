@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import textwrap
 from datetime import datetime
@@ -92,13 +93,19 @@ def normalize_status_url(url: str) -> str:
     return match.group(0) if match else ""
 
 
-def score_text(text: str) -> float:
-    lowered = (text or "").lower()
+def score_candidate(candidate: dict) -> float:
+    text = (candidate.get("text") or "")
+    lowered = text.lower()
     score = min(len(text.strip()), 900) / 900
     for kw in TECH_KEYWORDS:
         if kw in lowered:
             score += 2
-    return score
+    likes = int(candidate.get("likes") or 0)
+    replies = int(candidate.get("replies") or 0)
+    reposts = int(candidate.get("reposts") or 0)
+    views = int(candidate.get("views") or 0)
+    engagement_bonus = math.log10(1 + likes * 2 + replies * 3 + reposts * 2 + views / 1000)
+    return round(score + engagement_bonus, 3)
 
 
 def looks_supported_language(text: str) -> bool:
@@ -142,8 +149,13 @@ def shortlist_candidates(posts: list[dict], replied: set[str]) -> list[dict]:
             "text": text[:1800],
             "quoted_post_text": str(post.get("quoted_post_text") or "").strip()[:1200],
             "is_quote_tweet": bool(post.get("is_quote_tweet")),
-            "score": round(score_text(text), 3),
+            "likes": int(post.get("likes") or 0),
+            "replies": int(post.get("replies") or 0),
+            "reposts": int(post.get("reposts") or 0),
+            "views": int(post.get("views") or 0),
+            "score": 0.0,
         }
+        candidate["score"] = score_candidate(candidate)
         existing = deduped.get(url)
         if not existing or candidate["score"] > existing["score"]:
             deduped[url] = candidate
@@ -222,24 +234,47 @@ else:
     js('window.scrollTo(0, 0)')
     wait(1)
     posts = js("""
-(() => Array.from(document.querySelectorAll('article')).map((el, i) => {{
-  const text = el.innerText || '';
-  const textBlocks = Array.from(el.querySelectorAll('[data-testid="tweetText"]'))
-    .map(node => (node.innerText || '').trim())
-    .filter(Boolean);
-  const links = Array.from(el.querySelectorAll('a[href*="/status/"]'))
-    .map(a => a.href)
-    .filter(Boolean);
-  return {{
-    i,
-    text,
-    main_text: textBlocks[0] || text,
-    quoted_post_text: textBlocks[1] || '',
-    is_quote_tweet: textBlocks.length > 1,
-    links
-  }};
-  ;
-}}))()
+(() => {{
+  function parseCount(s) {{
+    if (!s) return 0;
+    s = (s + '').replace(/,/g, '').trim();
+    if (/^\d+(\.\d+)?[Kk]$/.test(s)) return Math.round(parseFloat(s) * 1000);
+    if (/^\d+(\.\d+)?[Mm]$/.test(s)) return Math.round(parseFloat(s) * 1000000);
+    return parseInt(s, 10) || 0;
+  }}
+  function countBtn(el, tids) {{
+    for (const tid of tids) {{
+      const btn = el.querySelector('[data-testid="' + tid + '"]');
+      if (!btn) continue;
+      for (const sp of btn.querySelectorAll('span')) {{
+        const t = (sp.innerText || '').trim();
+        if (/^[\d.,KkMm]+$/.test(t) && t) return parseCount(t);
+      }}
+    }}
+    return 0;
+  }}
+  return Array.from(document.querySelectorAll('article')).map((el, i) => {{
+    const text = el.innerText || '';
+    const textBlocks = Array.from(el.querySelectorAll('[data-testid="tweetText"]'))
+      .map(node => (node.innerText || '').trim())
+      .filter(Boolean);
+    const links = Array.from(el.querySelectorAll('a[href*="/status/"]'))
+      .map(a => a.href)
+      .filter(Boolean);
+    return {{
+      i,
+      text,
+      main_text: textBlocks[0] || text,
+      quoted_post_text: textBlocks[1] || '',
+      is_quote_tweet: textBlocks.length > 1,
+      links,
+      replies: countBtn(el, ['reply']),
+      reposts: countBtn(el, ['retweet', 'unretweet']),
+      likes: countBtn(el, ['like', 'unlike']),
+      views: countBtn(el, ['analyticsButton'])
+    }};
+  }});
+}})()
 """) or []
     out = {{
         'ok': True,

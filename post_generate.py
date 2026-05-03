@@ -164,7 +164,7 @@ def topic_payload(topic: dict) -> dict:
     }
 
 
-def build_candidate_messages(topic: dict) -> list[dict]:
+def build_candidate_messages(topic: dict, persona_context: dict) -> list[dict]:
     payload = topic_payload(topic)
     references = recent_learning_references(limit=4)
     compact_refs = [
@@ -186,7 +186,7 @@ def build_candidate_messages(topic: dict) -> list[dict]:
                 {
                     "task": "生成 3 条不同角度的主动发帖候选",
                     "topic": payload,
-                    "persona_context": get_generation_context(),
+                    "persona_context": persona_context,
                     "requirements": [
                         "不要泛泛地谈 founder、AI 产品、独立开发这类大词",
                         "一定要挂在具体对象、最近观察、一次经历、一个热点或一段明确论证上",
@@ -306,7 +306,7 @@ def generate_post_plan(topic: dict) -> dict:
         raise RuntimeError("Empty topic.")
 
     candidate_result, candidate_payload = chat_json_result(
-        build_candidate_messages(topic),
+        build_candidate_messages(topic, persona_context),
         temperature=0.95,
         max_tokens=1400,
     )

@@ -72,7 +72,7 @@ def _build_persona_context() -> str:
                 parts.append("近期发帖: " + " / ".join(samples))
         if not parts:
             return ""
-        return ("【账号人设】\n" + "\n".join(parts))[:200]
+        return ("【账号人设】\n" + "\n".join(parts))[:400]
     except Exception:
         return ""
 

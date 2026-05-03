@@ -22,6 +22,7 @@ from common import (
     write_json,
 )
 from post_generate import generate_post_plan
+from persona_store import add_recent_post
 
 ROOT = Path(__file__).resolve().parent
 POST_LOCK_PATH = ROOT / "state" / "post_once.lock"
@@ -201,6 +202,7 @@ def main() -> int:
                 "used",
                 topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
             )
+            add_recent_post(record["post_text"], str(topic.get("type", "")))
 
         write_json(LATEST_POST_RUN_PATH, record)
         write_json(post_history_path_for(stamp), record)

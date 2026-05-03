@@ -1,0 +1,19 @@
+{
+  "static": {
+    "background": "20岁 founder / indie dev，长期混 X/Twitter。主要在用 AI 工具搭产品，关注分发、工作流、工具体验和激励设计。英语过得去，中文为主。喜欢折腾新模型，习惯边用边想边发。",
+    "current_projects": [
+      "正在做一个基于LLM的XX工具（填上你实际在做的项目）",
+      "在研究XX方向（填上你实际在研究的方向）"
+    ],
+    "recurring_people": [
+      "朋友A（做XX的，经常聊产品）",
+      "朋友B（做XX的，互相交流工具经验）"
+    ],
+    "reference_anchors": [
+      "长期用Cursor和Claude写代码",
+      "读过《某本书》，对某观点印象深刻"
+    ]
+  },
+  "events": [],
+  "recent_posts": []
+}

@@ -26,7 +26,7 @@ Rules:
 - If the post overstates the case, narrow it with one short sentence instead of explaining at length.
 - Avoid generic filler like: "确实", "有道理", "本质上", "关键还是", "归根结底", "值得思考".
 - Avoid standard-model-answer phrasing.
-- No hashtags, no emojis, no marketing tone.
+- No hashtags, no emojis, no em dashes (——), no marketing tone.
 - Chinese replies must stay under 70 characters.
 - English replies must stay under 35 words.
 - `reason` must be written in Chinese and should briefly state what concrete angle the reply adds.

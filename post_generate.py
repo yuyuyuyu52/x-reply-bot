@@ -14,6 +14,7 @@ from common import (
     topic_summary_text,
 )
 from learning_store import recent_learning_references
+from persona_store import get_generation_context
 
 CANDIDATE_PROMPT = """你在为一个真实的 X 账号写主动发帖。
 
@@ -185,6 +186,7 @@ def build_candidate_messages(topic: dict) -> list[dict]:
                 {
                     "task": "生成 3 条不同角度的主动发帖候选",
                     "topic": payload,
+                    "persona_context": get_generation_context(),
                     "requirements": [
                         "不要泛泛地谈 founder、AI 产品、独立开发这类大词",
                         "一定要挂在具体对象、最近观察、一次经历、一个热点或一段明确论证上",
@@ -216,7 +218,7 @@ def build_rerank_messages(topic: dict, candidates: list[dict]) -> list[dict]:
     ]
 
 
-def build_review_messages(topic: dict, candidate: dict) -> list[dict]:
+def build_review_messages(topic: dict, candidate: dict, persona_context: dict) -> list[dict]:
     return [
         {"role": "system", "content": REVIEW_PROMPT},
         {
@@ -225,6 +227,7 @@ def build_review_messages(topic: dict, candidate: dict) -> list[dict]:
                 {
                     "topic": topic_payload(topic),
                     "candidate": candidate,
+                    "recent_events": persona_context.get("recent_events", []),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -268,7 +271,7 @@ def normalize_candidates(candidates: list[dict]) -> list[dict]:
     return normalized
 
 
-def rewrite_selected_candidate(topic: dict, candidate: dict, review_reason: str, rewrite_hint: str) -> tuple[dict, dict, dict]:
+def rewrite_selected_candidate(topic: dict, candidate: dict, review_reason: str, rewrite_hint: str, persona_context: dict) -> tuple[dict, dict, dict]:
     rewrite_result, rewrite_payload = chat_json_result(
         build_rewrite_messages(topic, candidate, review_reason, rewrite_hint),
         temperature=0.85,
@@ -283,7 +286,7 @@ def rewrite_selected_candidate(topic: dict, candidate: dict, review_reason: str,
     if not rewritten["text"]:
         raise RuntimeError(f"Rewrite returned empty text: {rewrite_payload}")
     review_result, review_payload = chat_json_result(
-        build_review_messages(topic, rewritten),
+        build_review_messages(topic, rewritten, persona_context),
         temperature=0.2,
         max_tokens=720,
     )
@@ -298,6 +301,7 @@ def rewrite_selected_candidate(topic: dict, candidate: dict, review_reason: str,
 
 def generate_post_plan(topic: dict) -> dict:
     topic = normalize_post_topic(topic)
+    persona_context = get_generation_context()
     if not topic_summary_text(topic):
         raise RuntimeError("Empty topic.")
 
@@ -333,7 +337,7 @@ def generate_post_plan(topic: dict) -> dict:
 
     if selected_candidate:
         review_result, review_payload = chat_json_result(
-            build_review_messages(topic, selected_candidate),
+            build_review_messages(topic, selected_candidate, persona_context),
             temperature=0.2,
             max_tokens=720,
         )
@@ -348,6 +352,7 @@ def generate_post_plan(topic: dict) -> dict:
                 selected_candidate,
                 review_reason,
                 review_rewrite_hint,
+                persona_context,
             )
             best_candidate = rewritten_candidate
             rewrite_usage = rewrite_model_result["usage"]

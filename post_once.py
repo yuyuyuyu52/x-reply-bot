@@ -22,6 +22,7 @@ from common import (
     write_json,
 )
 from post_generate import generate_post_plan
+from topic_auto import generate_auto_topic
 from persona_store import add_recent_post
 
 ROOT = Path(__file__).resolve().parent
@@ -110,15 +111,19 @@ def main() -> int:
     try:
         topic = next_pending_post_topic()
         if not topic:
-            payload = {
-                "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
-                "trigger": args.trigger,
-                "dry_run": args.dry_run,
-                "status": "no_pending_topic",
-            }
-            write_json(LATEST_POST_RUN_PATH, payload)
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
-            return 2
+            try:
+                topic = generate_auto_topic()
+            except Exception as exc:
+                payload = {
+                    "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    "trigger": args.trigger,
+                    "dry_run": args.dry_run,
+                    "status": "auto_topic_failed",
+                    "error": str(exc),
+                }
+                write_json(LATEST_POST_RUN_PATH, payload)
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 1
 
         plan = generate_post_plan(topic)
         selected_candidate = plan.get("selected_candidate")

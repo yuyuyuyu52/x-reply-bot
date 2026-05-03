@@ -46,11 +46,15 @@ def _build_learning_context() -> str:
         for r in refs:
             hook = (r.get("hook_type") or "").strip()
             why = (r.get("why_it_works") or "").strip()
+            takeaway = (r.get("imitation_takeaway") or "").strip()
             if hook and why:
-                lines.append(f"- {hook} → {why}")
+                entry = f"- {hook} → {why}"
+                if takeaway:
+                    entry += f"（可借鉴：{takeaway}）"
+                lines.append(entry)
         if len(lines) == 1:
             return ""
-        return "\n".join(lines)[:400]
+        return "\n".join(lines)[:500]
     except Exception:
         return ""
 
@@ -65,6 +69,10 @@ def _build_persona_context() -> str:
         for k, v in list(static.items())[:6]:
             if isinstance(v, str) and v.strip():
                 parts.append(f"{k}: {v.strip()}")
+            elif isinstance(v, list) and v:
+                items = [str(x).strip() for x in v[:3] if str(x).strip()]
+                if items:
+                    parts.append(f"{k}: " + " / ".join(x[:50] for x in items))
         recent_posts = ctx.get("recent_posts") or []
         if recent_posts:
             samples = [p["text"][:60] for p in recent_posts[-3:] if p.get("text")]
@@ -72,7 +80,7 @@ def _build_persona_context() -> str:
                 parts.append("近期发帖: " + " / ".join(samples))
         if not parts:
             return ""
-        return ("【账号人设】\n" + "\n".join(parts))[:400]
+        return ("【账号人设】\n" + "\n".join(parts))[:600]
     except Exception:
         return ""
 

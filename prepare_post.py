@@ -239,8 +239,8 @@ else:
   function parseCount(s) {{
     if (!s) return 0;
     s = (s + '').replace(/,/g, '').trim();
-    if (/^\d+(\.\d+)?[Kk]$/.test(s)) return Math.round(parseFloat(s) * 1000);
-    if (/^\d+(\.\d+)?[Mm]$/.test(s)) return Math.round(parseFloat(s) * 1000000);
+    if (/^\\d+(\\.\\d+)?[Kk]$/.test(s)) return Math.round(parseFloat(s) * 1000);
+    if (/^\\d+(\\.\\d+)?[Mm]$/.test(s)) return Math.round(parseFloat(s) * 1000000);
     return parseInt(s, 10) || 0;
   }}
   function countBtn(el, tids) {{
@@ -249,7 +249,7 @@ else:
       if (!btn) continue;
       for (const sp of btn.querySelectorAll('span')) {{
         const t = (sp.innerText || '').trim();
-        if (/^\d[\d.,]*[KkMm]?$/.test(t) && t) return parseCount(t);
+        if (/^\\d[\\d.,]*[KkMm]?$/.test(t) && t) return parseCount(t);
       }}
     }}
     return 0;

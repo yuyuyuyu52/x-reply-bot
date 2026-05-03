@@ -37,10 +37,14 @@ posted_shot = {json.dumps(str(posted_shot))}
 tabs = list_tabs(include_chrome=False)
 x_tab = None
 for t in tabs:
-    tab_url = t.get('url', '')
-    if 'x.com/home' in tab_url:
+    if 'x.com/home' in t.get('url', ''):
         x_tab = t
         break
+if not x_tab:
+    for t in tabs:
+        if 'x.com' in t.get('url', ''):
+            x_tab = t
+            break
 if x_tab:
     switch_tab(x_tab['targetId'])
 else:
@@ -48,12 +52,12 @@ else:
     switch_tab(tid)
 
 current = page_info()
-if current.get('dialog'):
-    tid = new_tab('https://x.com/home')
-    switch_tab(tid)
-    current = page_info()
-if 'x.com/home' not in (current.get('url') or ''):
+if current.get('dialog') or 'x.com/home' not in (current.get('url') or ''):
+    js('window.onbeforeunload = null')
     goto_url('https://x.com/home')
+    wait_for_load(20)
+    wait(2)
+    current = page_info()
 
 wait_for_load(20)
 wait(4)
@@ -128,6 +132,7 @@ else:
         sent_ok = ('你的帖子已发送' in body) or ('Your post was sent' in body)
         posted_url = ''
         if profile_url:
+            js('window.onbeforeunload = null')
             goto_url(profile_url)
             wait_for_load(20)
             wait(4)

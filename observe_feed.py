@@ -211,10 +211,13 @@ else:
     switch_tab(tid)
 current = page_info()
 if current.get('dialog'):
-    tid = new_tab('https://x.com/home')
-    switch_tab(tid)
+    js('window.onbeforeunload = null')
+    goto_url('https://x.com/home')
+    wait_for_load(20)
+    wait(2)
     current = page_info()
 
+js('window.onbeforeunload = null')
 goto_url('https://x.com/home')
 wait_for_load(20)
 wait(4)

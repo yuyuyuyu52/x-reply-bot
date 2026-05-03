@@ -198,22 +198,26 @@ def norm_status(url):
 tabs = list_tabs(include_chrome=False)
 x_tab = None
 for tab in tabs:
-    tab_url = tab.get('url', '')
-    if 'x.com/home' in tab_url:
+    if 'x.com/home' in tab.get('url', ''):
         x_tab = tab
         break
+if not x_tab:
+    for tab in tabs:
+        if 'x.com' in tab.get('url', ''):
+            x_tab = tab
+            break
 if x_tab:
     switch_tab(x_tab['targetId'])
 else:
     tid = new_tab('https://x.com/home')
     switch_tab(tid)
 current = page_info()
-if current.get('dialog'):
-    tid = new_tab('https://x.com/home')
-    switch_tab(tid)
-    current = page_info()
-if 'x.com/home' not in (current.get('url') or ''):
+if current.get('dialog') or 'x.com/home' not in (current.get('url') or ''):
+    js('window.onbeforeunload = null')
     goto_url('https://x.com/home')
+    wait_for_load(20)
+    wait(2)
+    current = page_info()
 
 wait_for_load(20)
 wait(5)
@@ -330,10 +334,14 @@ detail_js = {json.dumps(detail_js)}
 tabs = list_tabs(include_chrome=False)
 x_tab = None
 for tab in tabs:
-    tab_url = tab.get('url', '')
-    if tab_url.startswith(url):
+    if tab.get('url', '').startswith(url):
         x_tab = tab
         break
+if not x_tab:
+    for tab in tabs:
+        if 'x.com' in tab.get('url', ''):
+            x_tab = tab
+            break
 if x_tab:
     switch_tab(x_tab['targetId'])
 else:
@@ -341,14 +349,12 @@ else:
     switch_tab(tid)
 
 current = page_info()
-if current.get('dialog'):
-    tid = new_tab(url)
-    switch_tab(tid)
-    current = page_info()
-if not (current.get('url') or '').startswith(url):
+if current.get('dialog') or not (current.get('url') or '').startswith(url):
+    js('window.onbeforeunload = null')
     goto_url(url)
     wait_for_load(20)
     wait(5)
+    current = page_info()
 
 detail_info = page_info()
 detail = js(detail_js) or []

@@ -49,29 +49,22 @@ posted_shot = {json.dumps(str(posted_shot))}
 tabs = list_tabs(include_chrome=False)
 x_tab = None
 for t in tabs:
-    tab_url = t.get('url', '')
-    if tab_url.startswith(url):
+    if t.get('url', '').startswith(url):
         x_tab = t
         break
+if not x_tab:
+    for t in tabs:
+        if 'x.com' in t.get('url', ''):
+            x_tab = t
+            break
 if x_tab:
     switch_tab(x_tab['targetId'])
 else:
     fresh_tab = new_tab(url)
     switch_tab(fresh_tab)
 info_before = page_info()
-if info_before.get('dialog'):
-    fresh = new_tab(url)
-    switch_tab(fresh)
-    wait_for_load(20)
-    wait(4)
-    info_before = page_info()
-if not (info_before.get('url') or '').startswith(url):
-    fresh = new_tab(url)
-    switch_tab(fresh)
-    wait_for_load(20)
-    wait(4)
-    info_before = page_info()
-if not (info_before.get('url') or '').startswith(url):
+if info_before.get('dialog') or not (info_before.get('url') or '').startswith(url):
+    js('window.onbeforeunload = null')
     goto_url(url)
     wait_for_load(20)
     wait(4)

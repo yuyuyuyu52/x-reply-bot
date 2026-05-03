@@ -31,6 +31,7 @@ Rules:
 - Only accept posts whose main language is Chinese, English, or a clear mix of Chinese and English.
 - Prefer AI, coding, models, API, tooling, and developer topics.
 - Prefer posts that can receive a short public reply without sounding forced.
+- Give extra preference to posts with high engagement (likes, replies, reposts) — these are actively resonating and replies will get more eyeballs.
 - If a post quotes another post, treat the main post as the reply target. The quoted post is context only.
 - `reason` must be written in Chinese.
 - If the shortlist has no good option, return:

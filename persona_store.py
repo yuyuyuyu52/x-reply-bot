@@ -3,11 +3,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, date
-from pathlib import Path
 
 from common import PERSONA_PATH
-
-_EMPTY: dict = {"static": {}, "events": [], "recent_posts": []}
 
 
 def load_persona() -> dict:
@@ -63,7 +60,7 @@ def add_recent_post(text: str, topic_type: str) -> None:
 
 def _relative_date(event_date_str: str) -> str:
     try:
-        delta = (date.today() - date.fromisoformat(event_date_str)).days
+        delta = (datetime.now().astimezone().date() - date.fromisoformat(event_date_str)).days
     except (ValueError, TypeError):
         return ""
     if delta == 0:

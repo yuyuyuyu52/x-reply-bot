@@ -6,10 +6,11 @@ import json
 import textwrap
 from datetime import datetime, timezone
 
-from common import SCREENSHOT_DIR, append_log, ensure_state_dirs, run_harness
+from common import SCREENSHOT_DIR, append_log, ensure_state_dirs, load_env_file, run_harness
 
 
 def main() -> int:
+    load_env_file()
     parser = argparse.ArgumentParser()
     parser.add_argument("--text", required=True)
     args = parser.parse_args()

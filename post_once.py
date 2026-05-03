@@ -166,7 +166,7 @@ def main() -> int:
 
         if not selected_candidate:
             record["status"] = "dry_run_rejected" if args.dry_run else "skipped_no_candidate"
-            if not args.dry_run:
+            if not args.dry_run and topic.get("source") != "auto":
                 mark_post_topic_status(
                     str(topic.get("id") or ""),
                     "skipped",
@@ -202,11 +202,12 @@ def main() -> int:
         record["status"] = "posted" if send.returncode == 0 else "send_failed"
 
         if send.returncode == 0:
-            mark_post_topic_status(
-                str(topic.get("id") or ""),
-                "used",
-                topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
-            )
+            if topic.get("source") != "auto":
+                mark_post_topic_status(
+                    str(topic.get("id") or ""),
+                    "used",
+                    topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
+                )
             add_recent_post(record["post_text"], str(topic.get("type", "")))
 
         write_json(LATEST_POST_RUN_PATH, record)

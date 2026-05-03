@@ -61,9 +61,9 @@ def generate_auto_topic() -> dict:
             "source": "auto",
             "status": "pending",
             "subject": "",
-            "event_or_context": "",
+            "event_or_context": str(payload.get("reason") or "").strip(),
             "stance": raw_text,
-            "evidence_hint": "",
+            "evidence_hint": str(payload.get("angle") or "").strip(),
         }
     )
     if not topic.get("text"):

@@ -532,7 +532,7 @@ def main() -> int:
             elif run_proc is None and now >= next_post_run_at:
                 queue = post_topic_summary()
                 today = now.strftime("%Y-%m-%d")
-                if queue["pending"] > 0 and count_scheduled_posts(today) < post_daily_limit():
+                if count_scheduled_posts(today) < post_daily_limit():
                     run_proc = start_job("post_once.py", "schedule")
                     run_trigger = "schedule"
                     active_label = "post_once.py"

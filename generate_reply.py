@@ -11,6 +11,8 @@ from common import (
     load_env_file,
     load_json,
 )
+from learning_store import recent_learning_references
+from persona_store import get_generation_context
 
 DEFAULT_PROMPT = """You write short, natural X replies.
 
@@ -35,7 +37,62 @@ Rules:
 """
 
 
+def _build_learning_context() -> str:
+    try:
+        refs = recent_learning_references(limit=4)
+        if not refs:
+            return ""
+        lines = ["【近期高互动帖规律】"]
+        for r in refs:
+            hook = (r.get("hook_type") or "").strip()
+            why = (r.get("why_it_works") or "").strip()
+            if hook and why:
+                lines.append(f"- {hook} → {why}")
+        if len(lines) == 1:
+            return ""
+        return "\n".join(lines)[:400]
+    except Exception:
+        return ""
+
+
+def _build_persona_context() -> str:
+    try:
+        ctx = get_generation_context()
+        static = ctx.get("static") or {}
+        if not static:
+            return ""
+        parts = []
+        for k, v in list(static.items())[:6]:
+            if isinstance(v, str) and v.strip():
+                parts.append(f"{k}: {v.strip()}")
+        recent_posts = ctx.get("recent_posts") or []
+        if recent_posts:
+            samples = [p["text"][:60] for p in recent_posts[-3:] if p.get("text")]
+            if samples:
+                parts.append("近期发帖: " + " / ".join(samples))
+        if not parts:
+            return ""
+        return ("【账号人设】\n" + "\n".join(parts))[:200]
+    except Exception:
+        return ""
+
+
 def build_messages(post: dict, system_prompt: str) -> list[dict]:
+    learning_ctx = _build_learning_context()
+    persona_ctx = _build_persona_context()
+
+    system_parts = [system_prompt]
+    if learning_ctx:
+        system_parts.append(learning_ctx)
+    if persona_ctx:
+        system_parts.append(persona_ctx)
+    if learning_ctx:
+        system_parts.append(
+            "根据这条帖子的话题，优先使用上面规律中效果最好的 hook 类型开头，而不是写通用答案。"
+        )
+
+    full_system = "\n\n".join(system_parts)
+
     post_text = (post.get("main_post_text") or "").strip()
     quoted_post_text = (post.get("quoted_post_text") or "").strip()
     url = (post.get("url") or "").strip()
@@ -49,7 +106,7 @@ def build_messages(post: dict, system_prompt: str) -> list[dict]:
             f"{quoted_post_text}"
         )
     return [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": full_system},
         {
             "role": "user",
             "content": (

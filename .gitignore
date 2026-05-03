@@ -7,3 +7,5 @@ __pycache__/
 state/
 
 .DS_Store
+
+.worktrees/

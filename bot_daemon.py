@@ -30,6 +30,7 @@ from common import (
     write_json,
 )
 from learning_store import learning_counts, top_learning_posts
+from persona_store import add_event as persona_add_event
 
 ROOT = Path(__file__).resolve().parent
 LOG_PATH = ROOT / "state" / "logs" / "bot.log"
@@ -414,6 +415,19 @@ def handle_command(
             return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
         _safe_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
         return start_job("observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, "telegram", "observe_feed.py"
+
+    if command.startswith("/event"):
+        body = stripped[len("/event"):].strip()
+        if not body:
+            _safe_notify("⚠️ 用法：/event <事件描述>，例如：/event 今天和朋友聊了关于XX的事")
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+        try:
+            evt = persona_add_event(body)
+            _safe_notify(f"✅ 已记录事件\n\n📅 {evt['timestamp']}\n📝 {evt['raw']}")
+        except Exception as exc:
+            log(f"persona_add_event failed: {exc}")
+            _safe_notify(f"❌ 记录失败：{exc}")
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
 
     return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
 

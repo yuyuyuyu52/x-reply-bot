@@ -248,7 +248,7 @@ else:
       if (!btn) continue;
       for (const sp of btn.querySelectorAll('span')) {{
         const t = (sp.innerText || '').trim();
-        if (/^[\d.,KkMm]+$/.test(t) && t) return parseCount(t);
+        if (/^\d[\d.,]*[KkMm]?$/.test(t) && t) return parseCount(t);
       }}
     }}
     return 0;

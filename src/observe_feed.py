@@ -33,6 +33,7 @@ from src.learning_store import (
 
 ROOT = Path(__file__).resolve().parent
 LOCK_PATH = ROOT / "state" / "observe_feed.lock"
+FOLLOW_TODAY_PATH = ROOT / "state" / "follow_today.json"
 
 ANALYSIS_PROMPT = """你在帮一个 X 账号做观察和学习。
 
@@ -365,14 +366,29 @@ def analyze_candidates(candidates: list[dict]) -> dict:
     }
 
 def get_today_follow_count() -> int:
-    from src.learning_store import db_connect
     today = datetime.now().astimezone().strftime("%Y-%m-%d")
-    with db_connect() as conn:
-        row = conn.execute(
-            "SELECT count(*) as c FROM learned_posts WHERE observed_at LIKE ? AND raw_json LIKE '%"action": "followed"%'",
-            (f"{today}%",)
-        ).fetchone()
-        return row["c"] if row else 0
+    try:
+        data = json.loads(FOLLOW_TODAY_PATH.read_text())
+        if data.get("date") == today:
+            return int(data.get("count", 0))
+    except Exception:
+        pass
+    return 0
+
+
+def _increment_follow_count() -> None:
+    today = datetime.now().astimezone().strftime("%Y-%m-%d")
+    try:
+        try:
+            data = json.loads(FOLLOW_TODAY_PATH.read_text())
+        except Exception:
+            data = {}
+        if data.get("date") != today:
+            data = {"date": today, "count": 0}
+        data["count"] = int(data.get("count", 0)) + 1
+        FOLLOW_TODAY_PATH.write_text(json.dumps(data))
+    except Exception:
+        pass
 
 def auto_follow_user(handle: str) -> dict:
     if not handle:
@@ -387,7 +403,7 @@ def auto_follow_user(handle: str) -> dict:
     if handle.startswith("@"):
         handle = handle[1:]
         
-    code = f"""
+    code = f'''
 import json
 handle = {json.dumps(handle)}
 url = f'https://x.com/{{handle}}'
@@ -401,7 +417,7 @@ followed = js("""
   const btns = Array.from(document.querySelectorAll('[role="button"]'));
   const followBtn = btns.find(btn => btn.innerText.includes('Follow') || btn.innerText.includes('关注'));
   const followingBtn = btns.find(btn => btn.innerText.includes('Following') || btn.innerText.includes('正在关注'));
-  
+
   if (followingBtn) {{
     return {{ok: true, action: 'already_following'}};
   }}
@@ -420,10 +436,13 @@ print(json.dumps({{
     'action': followed.get('action', ''),
     'reason': followed.get('reason', '')
 }}, ensure_ascii=False, indent=2))
-"""
+'''
     try:
         stdout = run_harness(textwrap.dedent(code))
-        return json.loads(stdout)
+        result = json.loads(stdout)
+        if result.get("action") == "followed":
+            _increment_follow_count()
+        return result
     except Exception as exc:
         return {"ok": False, "handle": handle, "reason": "exception", "error": str(exc)}
 

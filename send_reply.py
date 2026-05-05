@@ -137,6 +137,10 @@ else:
             posts = replied.setdefault("posts", [])
             if url not in posts:
                 posts.append(url)
+                # Cap to the most recent 2000 entries — old replies
+                # never recur in feed, so unbounded growth is just bloat.
+                if len(posts) > 2000:
+                    replied["posts"] = posts[-2000:]
                 write_json(REPLIED_PATH, replied)
         append_log(
             {

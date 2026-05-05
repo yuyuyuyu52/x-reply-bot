@@ -7,6 +7,13 @@ omitted unless they alter how the bot is configured or operated.
 
 ## [Unreleased]
 
+### Added
+- 回复反馈：`revisit.py` 现在也扫 `state/history/`，对发出 ≥24h 的回复打开原帖楼、滚动定位自己那条 nested reply（`reply_text` 完全匹配 + 自家 handle 兜底确认）、抓 aria-label 写入 `engagement_24h`；找不到时累计 attempts，3 次后标记 `failed`
+- `/revisit_status` 与每晚 24h 反馈摘要现在分别按 `post` / `reply` 计数与展示
+
+### Fixed
+- `needs_revisit(reply)` 之前用 `int(rc or 1)` 判断成功码，导致 `send_returncode == 0` 反而被排除；改为显式 `rc is None or int(rc) != 0`
+
 ## [2026-05-05]
 ### Added
 - 反馈回访任务 `revisit.py`：每晚 23:00–07:00 每 30 分钟扫一次 `state/post_history/`，对发出 ≥24h 的主动帖回访其 views/likes/replies/reposts/bookmarks 并写入 `engagement_24h`，失败 3 次后标记 `failed` 不再尝试 (f3c4482, 74577d0)

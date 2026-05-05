@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from learning_store import _best_label, QUALITY_RANK  # noqa: E402
+from src.learning_store import _best_label, QUALITY_RANK  # noqa: E402
 
 
 class QualityRankTests(unittest.TestCase):

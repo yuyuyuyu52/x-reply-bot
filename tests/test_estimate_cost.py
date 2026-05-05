@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 # Make sure `model_name()` doesn't pull from .env unexpectedly.
 os.environ.setdefault("X_REPLY_MODEL", "test-default")
 
-from common import estimate_cost, qwen35_flash_rates  # noqa: E402
+from src.common import estimate_cost, qwen35_flash_rates  # noqa: E402
 
 
 class QwenTierTests(unittest.TestCase):

@@ -302,38 +302,51 @@ def learning_summary(next_learn_at: datetime) -> str:
     return "\n".join(lines)
 
 
+def _revisit_record_eligible(rec: dict, kind: str) -> bool:
+    if kind == "post":
+        if rec.get("dry_run") or rec.get("status") != "posted":
+            return False
+    else:
+        rc = rec.get("send_returncode")
+        if rc is None or int(rc) != 0:
+            return False
+        if not (rec.get("reply_text") or rec.get("reply") or "").strip():
+            return False
+    return bool(rec.get("post_url"))
+
+
 def revisit_counts() -> dict:
-    """Light-weight scan over post_history for revisit pipeline visibility."""
+    """Aggregate state across both post and reply histories for status output."""
     pending = 0
     succeeded = 0
     failed = 0
     skipped = 0  # dry-runs / not-posted / no URL
-    waiting = 0  # posted but <24h old or already has metrics
+    waiting = 0  # posted but <24h old
     now = datetime.now().astimezone()
-    for path in sorted(POST_HISTORY_DIR.glob("*.json")):
-        try:
-            rec = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if rec.get("dry_run") or rec.get("status") != "posted" or not rec.get("post_url"):
-            skipped += 1
-            continue
-        eng = rec.get("engagement_24h") or {}
-        if eng.get("metrics"):
-            succeeded += 1
-            continue
-        if eng.get("failed"):
-            failed += 1
-            continue
-        # posted, no metrics yet
-        try:
-            posted_at = datetime.strptime(rec.get("time_beijing", ""), "%Y-%m-%d %H:%M:%S CST").replace(tzinfo=timezone(timedelta(hours=8)))
-        except Exception:
-            posted_at = None
-        if posted_at and (now - posted_at) < timedelta(hours=24):
-            waiting += 1
-        else:
-            pending += 1
+    for kind, directory in (("post", POST_HISTORY_DIR), ("reply", HISTORY_DIR)):
+        for path in sorted(directory.glob("*.json")):
+            try:
+                rec = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not _revisit_record_eligible(rec, kind):
+                skipped += 1
+                continue
+            eng = rec.get("engagement_24h") or {}
+            if eng.get("metrics"):
+                succeeded += 1
+                continue
+            if eng.get("failed"):
+                failed += 1
+                continue
+            try:
+                posted_at = datetime.strptime(rec.get("time_beijing", ""), "%Y-%m-%d %H:%M:%S CST").replace(tzinfo=timezone(timedelta(hours=8)))
+            except Exception:
+                posted_at = None
+            if posted_at and (now - posted_at) < timedelta(hours=24):
+                waiting += 1
+            else:
+                pending += 1
     return {
         "pending": pending,
         "waiting_24h": waiting,
@@ -388,37 +401,47 @@ def maybe_send_revisit_report(now: datetime, run_proc: subprocess.Popen[str] | N
     today = now.strftime("%Y-%m-%d")
     yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
     completed_today: list[dict] = []
-    for path in sorted(POST_HISTORY_DIR.glob("*.json")):
-        try:
-            rec = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        eng = rec.get("engagement_24h") or {}
-        metrics = eng.get("metrics")
-        if not metrics:
-            continue
-        checked_at = str(eng.get("checked_at") or "")
-        if today not in checked_at and yesterday not in checked_at:
-            continue
-        completed_today.append({"record": rec, "metrics": metrics, "score": eng.get("score") or 0})
+    for kind, directory in (("post", POST_HISTORY_DIR), ("reply", HISTORY_DIR)):
+        for path in sorted(directory.glob("*.json")):
+            try:
+                rec = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            eng = rec.get("engagement_24h") or {}
+            metrics = eng.get("metrics")
+            if not metrics:
+                continue
+            checked_at = str(eng.get("checked_at") or "")
+            if today not in checked_at and yesterday not in checked_at:
+                continue
+            completed_today.append(
+                {"kind": kind, "record": rec, "metrics": metrics, "score": eng.get("score") or 0}
+            )
 
     if not completed_today:
         # Nothing to report yet; try again on the next loop tick.
         return
 
     completed_today.sort(key=lambda x: float(x.get("score") or 0), reverse=True)
+    n_posts = sum(1 for it in completed_today if it["kind"] == "post")
+    n_replies = sum(1 for it in completed_today if it["kind"] == "reply")
     lines = format_header("📈 24h 反馈汇总")
     lines.append(format_kv("🌙", "窗口日期", window_start_date))
-    lines.append(format_kv("📊", "已回访", len(completed_today)))
+    lines.append(format_kv("📊", "已回访", f"{len(completed_today)} (📝{n_posts} 💬{n_replies})"))
     lines.append("")
     for item in completed_today[:5]:
         rec = item["record"]
         m = item["metrics"]
-        text = str(rec.get("post_text") or "")[:60]
+        if item["kind"] == "post":
+            text = str(rec.get("post_text") or "")[:60]
+            tag = "📝"
+        else:
+            text = str(rec.get("reply_text") or rec.get("reply") or "")[:60]
+            tag = "💬"
         lines.append(
-            f"• {rec.get('time_beijing', '')[:16]} 👁️{m.get('views',0)} 💚{m.get('likes',0)} 💬{m.get('replies',0)} 🔁{m.get('reposts',0)}"
+            f"• {tag} {rec.get('time_beijing', '')[:16]} 👁️{m.get('views',0)} 💚{m.get('likes',0)} 💬{m.get('replies',0)} 🔁{m.get('reposts',0)}"
         )
-        lines.append(f"  📝 {text}")
+        lines.append(f"  {text}")
     try:
         telegram_notify("\n".join(lines))
         write_json(REVISIT_REPORT_STATE_PATH, {"last_reported_window": window_start_date})

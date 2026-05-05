@@ -22,8 +22,7 @@ This is a standalone bot.
   - `http://10.0.0.175:9223`
   - or set `X_REPLY_CDP_URL`
 - `browser-harness` installed:
-  - default path: `/home/will/.local/bin/browser-harness`
-  - override with `BROWSER_HARNESS_BIN`
+  - set `BROWSER_HARNESS_BIN` to the absolute path of the binary
 - A compatible LLM API:
   - `X_REPLY_API_KEY`
   - `X_REPLY_BASE_URL`
@@ -40,14 +39,14 @@ will not match the documented model id.
 ## Quick Start
 
 ```bash
-cd /home/will/x-reply-bot
+cd /path/to/x-reply-bot   # wherever you cloned the repo
 bash start_bot.sh
 ```
 
 Check status:
 
 ```bash
-cd /home/will/x-reply-bot
+cd /path/to/x-reply-bot   # wherever you cloned the repo
 bash status_bot.sh
 ```
 
@@ -61,12 +60,15 @@ Telegram commands from your phone:
 /post_status
 /learn_once
 /learn_status
+/revisit_once
+/revisit_status
+/event
 ```
 
 Stop it:
 
 ```bash
-cd /home/will/x-reply-bot
+cd /path/to/x-reply-bot   # wherever you cloned the repo
 bash stop_bot.sh
 ```
 

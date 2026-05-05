@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from common import chat_json_result, normalize_post_topic
-from persona_store import get_generation_context
+from src.common import chat_json_result, normalize_post_topic
+from src.persona_store import get_generation_context
 
 AUTO_TOPIC_PROMPT = """你是一个真实 X 账号的主人，正在决定今天想发什么。
 

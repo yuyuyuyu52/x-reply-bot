@@ -7,7 +7,11 @@ import re
 import textwrap
 from datetime import datetime
 
-from common import (
+from src.harness import harness_navigate_snippet
+from src.common import (
+    BLOCK_PATTERNS,
+    normalize_status_url,
+    looks_supported_language,
     REPLIED_PATH,
     SCREENSHOT_DIR,
     SELECTED_PATH,
@@ -67,31 +71,7 @@ TECH_KEYWORDS = [
     "推理",
 ]
 
-BLOCK_PATTERNS = [
-    "promoted",
-    "广告",
-    "赞助",
-    "抽奖",
-    "giveaway",
-    "airdrop",
-    "邀请码",
-    "返利",
-    "affiliate",
-    "discount code",
-    "use my code",
-    "dm me",
-    "赚钱",
-    "稳赚",
-    "投资建议",
-    "signal",
-    "onlyfans",
-    "成人视频",
-]
-
-
-def normalize_status_url(url: str) -> str:
-    match = re.search(r"https://x\.com/[^/]+/status/\d+", url or "")
-    return match.group(0) if match else ""
+from src.common import BLOCK_PATTERNS
 
 
 def score_candidate(candidate: dict) -> float:
@@ -107,18 +87,6 @@ def score_candidate(candidate: dict) -> float:
     views = int(candidate.get("views") or 0)
     engagement_bonus = math.log10(1 + likes * 2 + replies * 3 + reposts * 2 + views / 1000)
     return round(score + engagement_bonus, 3)
-
-
-def looks_supported_language(text: str) -> bool:
-    if not text:
-        return False
-    han = len(re.findall(r"[\u4e00-\u9fff]", text))
-    latin = len(re.findall(r"[A-Za-z]", text))
-    other_letters = len(re.findall(r"[\u0400-\u04ff\u0600-\u06ff\u0900-\u0d7f\u3040-\u30ff\uac00-\ud7af]", text))
-    meaningful = han + latin + other_letters
-    if meaningful == 0:
-        return False
-    return (han + latin) / meaningful >= 0.8
 
 
 def shortlist_candidates(posts: list[dict], replied: set[str]) -> list[dict]:

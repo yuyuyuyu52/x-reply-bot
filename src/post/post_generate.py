@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from common import (
+from src.common import (
     chat_text_result,
     ensure_state_dirs,
     load_env_file,
@@ -13,8 +13,7 @@ from common import (
     parse_json_object,
     topic_summary_text,
 )
-from learning_store import recent_learning_references
-from persona_store import get_generation_context
+from src.context_builder import build_learning_context, build_persona_context, persona_context_dict
 
 CANDIDATE_PROMPT = """你在为一个真实的 X 账号写主动发帖。
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, date
 
-from common import PERSONA_PATH
+from src.common import PERSONA_PATH
 
 
 def load_persona() -> dict:

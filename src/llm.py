@@ -1,122 +1,17 @@
 #!/usr/bin/env python3
+"""LLM client: chat_completion, chat_text_result, chat_json_result, cost estimation.
+
+Extracted from common.py to isolate LLM concerns from I/O and browser logic.
+"""
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-STATE_DIR = ROOT / "state"
-SELECTED_PATH = STATE_DIR / "selected_post.json"
-REPLIED_PATH = STATE_DIR / "replied_posts.json"
-RUN_LOG_PATH = STATE_DIR / "run_log.json"
-SCREENSHOT_DIR = STATE_DIR / "screenshots"
-HISTORY_DIR = STATE_DIR / "history"
-LATEST_RUN_PATH = STATE_DIR / "latest_run.json"
-POST_HISTORY_DIR = STATE_DIR / "post_history"
-LATEST_POST_RUN_PATH = STATE_DIR / "latest_post_run.json"
-POST_TOPICS_PATH = STATE_DIR / "post_topics.json"
-PERSONA_PATH = STATE_DIR / "persona.json"
-TELEGRAM_STATE_PATH = STATE_DIR / "telegram_state.json"
-DAILY_REPORT_STATE_PATH = STATE_DIR / "daily_report_state.json"
-LATEST_REVISIT_RUN_PATH = STATE_DIR / "latest_revisit_run.json"
-REVISIT_REPORT_STATE_PATH = STATE_DIR / "revisit_report_state.json"
-ENV_PATH = ROOT / ".env"
-VALID_POST_TOPIC_TYPES = {"news_react", "story", "argument", "casual"}
-
-def browser_harness_bin() -> str:
-    return os.environ.get(
-        "BROWSER_HARNESS_BIN",
-        "/home/will/.local/bin/browser-harness",
-    )
-
-
-def browser_harness_root() -> Path:
-    return Path(
-        os.environ.get(
-            "BROWSER_HARNESS_ROOT",
-            "/home/will/Developer/browser-harness",
-        )
-    )
-
-
-def cdp_urls() -> list[str]:
-    return [
-        os.environ.get("X_REPLY_CDP_URL", "").strip(),
-        "http://127.0.0.1:9222",
-        "http://10.0.0.175:9223",
-    ]
-
-
-# Backwards-compat aliases (lazy evaluation now happens at call time)
-BROWSER_HARNESS = browser_harness_bin()
-BROWSER_HARNESS_ROOT = browser_harness_root()
-CDP_URLS = cdp_urls()
-
-
-def ensure_state_dirs() -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    POST_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def load_env_file() -> None:
-    if not ENV_PATH.exists():
-        return
-    for raw_line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        os.environ[key] = value
-
-
-def load_json(path: Path, default):
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return default
-
-
-def write_json(path: Path, data) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-
-
-def env_first(*names: str, default: str = "") -> str:
-    for name in names:
-        value = (os.environ.get(name) or "").strip()
-        if value:
-            return value
-    return default
-
-
-def model_name() -> str:
-    return env_first("X_REPLY_MODEL", "OPENAI_MODEL", "ANTHROPIC_MODEL", default="MiniMax-M2.7")
-
-
-def base_url() -> str:
-    return env_first(
-        "X_REPLY_BASE_URL",
-        "OPENAI_BASE_URL",
-        "ANTHROPIC_BASE_URL",
-        default="https://api.minimaxi.com/v1",
-    )
-
-
-def api_key() -> str:
-    return env_first("X_REPLY_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+from src.common import env_first, model_name, base_url, api_key
 
 
 def provider_mode() -> str:
@@ -323,11 +218,6 @@ def anthropic_completion(
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
 
-    # Reasoning models (e.g. MiniMax-M2.x via /anthropic) eat the entire
-    # max_tokens budget on thinking blocks if no thinking cap is set, leaving
-    # zero room for the text block we actually want. Cap thinking to half the
-    # budget (max 4096) so text always has headroom. Skip when budget is small
-    # (<1024) since callers there expect short factual JSON, not deep reasoning.
     if effective_max_tokens >= 1024:
         payload["thinking"] = {
             "type": "enabled",
@@ -372,7 +262,6 @@ def extract_usage(data: dict) -> dict:
 
 
 def qwen35_flash_rates(prompt_tokens: int) -> dict:
-    # Official qwen3.5-flash tiered pricing is based on single-request input tokens.
     if prompt_tokens <= 128_000:
         return {"input_per_million": 0.2, "output_per_million": 2.0}
     if prompt_tokens <= 256_000:
@@ -431,8 +320,6 @@ def chat_text_result(
     max_tokens: int | None = None,
 ) -> dict:
     data = chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
-    # Anthropic uses `stop_reason`, OpenAI uses `choices[0].finish_reason`.
-    # Normalize so the fall-through error message is meaningful in both modes.
     stop_reason = str(data.get("stop_reason") or "").strip()
     if not stop_reason:
         first_choice = (data.get("choices") or [{}])[0]
@@ -444,10 +331,6 @@ def chat_text_result(
             for block in content_blocks
             if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text") or "").strip()
         ).strip()
-        # Distinguish thinking-only truncation (model burned the whole budget on
-        # reasoning before emitting any text) from a generic empty response.
-        # Specific message lets caller retry with a larger budget instead of
-        # giving up. Don't dump `data` — thinking blocks may contain prompt echo.
         if not content:
             has_thinking = any(
                 isinstance(block, dict) and block.get("type") == "thinking"
@@ -534,9 +417,6 @@ def chat_json_result(
                     }
                 ]
             retry_temperature = min(retry_temperature, 0.35)
-            # On budget exhaustion (reasoning model burned all tokens on thinking)
-            # double the budget so text has room next time. On JSON parse errors,
-            # grow modestly. Cap at 8000 to bound cost.
             if "LLM_BUDGET_EXHAUSTED" in exc_str:
                 retry_max_tokens = min(8000, max(retry_max_tokens * 2, 2048))
             else:
@@ -554,281 +434,3 @@ def chat_text(
     max_tokens: int | None = None,
 ) -> str:
     return chat_text_result(messages, temperature=temperature, max_tokens=max_tokens)["content"]
-
-
-def append_log(entry: dict) -> None:
-    logs = load_json(RUN_LOG_PATH, [])
-    logs.append(entry)
-    write_json(RUN_LOG_PATH, logs[-200:])
-
-
-def append_jsonl(path: Path, entry: dict) -> None:
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def history_path_for(timestamp_label: str) -> Path:
-    safe = re.sub(r"[^0-9A-Za-z_.-]+", "_", timestamp_label)
-    return HISTORY_DIR / f"{safe}.json"
-
-
-def post_history_path_for(timestamp_label: str) -> Path:
-    safe = re.sub(r"[^0-9A-Za-z_.-]+", "_", timestamp_label)
-    return POST_HISTORY_DIR / f"{safe}.json"
-
-
-def topic_summary_text(topic: dict) -> str:
-    text = str(topic.get("text") or "").strip()
-    if text:
-        return text
-    stance = str(topic.get("stance") or "").strip()
-    if stance:
-        return stance
-    subject = str(topic.get("subject") or "").strip()
-    context = str(topic.get("event_or_context") or "").strip()
-    return " / ".join(part for part in [subject, context] if part)
-
-
-def normalize_post_topic(item: dict) -> dict:
-    normalized = dict(item or {})
-    topic_type = str(normalized.get("type") or "").strip().lower()
-    if topic_type not in VALID_POST_TOPIC_TYPES:
-        topic_type = "argument"
-    normalized["type"] = topic_type
-
-    for key in ["id", "text", "source", "status", "subject", "event_or_context", "stance", "evidence_hint"]:
-        normalized[key] = str(normalized.get(key) or "").strip()
-
-    if not normalized["status"]:
-        normalized["status"] = "pending"
-    if not normalized["source"]:
-        normalized["source"] = "manual"
-
-    if not normalized["stance"] and normalized["text"]:
-        normalized["stance"] = normalized["text"]
-    if not normalized["text"]:
-        normalized["text"] = topic_summary_text(normalized)
-
-    return normalized
-
-
-def load_post_topics() -> dict:
-    data = load_json(POST_TOPICS_PATH, {"topics": []})
-    if not isinstance(data, dict):
-        return {"topics": []}
-    topics = data.get("topics")
-    if not isinstance(topics, list):
-        data["topics"] = []
-    else:
-        data["topics"] = [normalize_post_topic(item) for item in topics if isinstance(item, dict)]
-    return data
-
-
-def save_post_topics(data: dict) -> None:
-    write_json(POST_TOPICS_PATH, data)
-
-
-def next_pending_post_topic() -> dict | None:
-    data = load_post_topics()
-    for item in data.get("topics", []):
-        if (item.get("status") or "pending") == "pending":
-            return item
-    return None
-
-
-def mark_post_topic_status(topic_id: str, status: str, extra: dict | None = None) -> dict:
-    data = load_post_topics()
-    updated = None
-    for item in data.get("topics", []):
-        if str(item.get("id") or "") != topic_id:
-            continue
-        item["status"] = status
-        if extra:
-            item.update(extra)
-        updated = item
-        break
-    save_post_topics(data)
-    return updated or {}
-
-
-def post_topic_summary() -> dict:
-    data = load_post_topics()
-    topics = data.get("topics", [])
-    summary = {"pending": 0, "used": 0, "skipped": 0, "total": len(topics)}
-    for item in topics:
-        status = str(item.get("status") or "pending")
-        if status in summary:
-            summary[status] += 1
-    return summary
-
-
-def telegram_token() -> str:
-    return env_first("X_REPLY_TG_BOT_TOKEN", "TELEGRAM_BOT_TOKEN")
-
-
-def telegram_chat_id() -> str:
-    return env_first("X_REPLY_TG_CHAT_ID", "TELEGRAM_CHAT_ID")
-
-
-def telegram_enabled() -> bool:
-    return bool(telegram_token() and telegram_chat_id())
-
-
-def telegram_notify(text: str) -> dict:
-    token = telegram_token()
-    chat_id = telegram_chat_id()
-    if not token or not chat_id:
-        raise RuntimeError("Missing X_REPLY_TG_BOT_TOKEN/TELEGRAM_BOT_TOKEN or X_REPLY_TG_CHAT_ID/TELEGRAM_CHAT_ID.")
-
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "disable_web_page_preview": True,
-    }
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def telegram_set_commands(commands: list[dict], scope: dict | None = None) -> dict:
-    token = telegram_token()
-    if not token:
-        raise RuntimeError("Missing X_REPLY_TG_BOT_TOKEN/TELEGRAM_BOT_TOKEN.")
-
-    payload: dict = {
-        "commands": commands,
-    }
-    if scope:
-        payload["scope"] = scope
-
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/setMyCommands",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def telegram_get_commands(scope: dict | None = None) -> dict:
-    token = telegram_token()
-    if not token:
-        raise RuntimeError("Missing X_REPLY_TG_BOT_TOKEN/TELEGRAM_BOT_TOKEN.")
-
-    payload: dict = {}
-    if scope:
-        payload["scope"] = scope
-
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/getMyCommands",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def resolve_ws() -> str:
-    if os.environ.get("BU_CDP_WS"):
-        return os.environ["BU_CDP_WS"]
-    errors = []
-    for base in [u for u in cdp_urls() if u]:
-        try:
-            with urllib.request.urlopen(f"{base.rstrip('/')}/json/version", timeout=5) as resp:
-                payload = json.loads(resp.read())
-            return payload["webSocketDebuggerUrl"]
-        except Exception as exc:
-            errors.append(f"{base}: {exc}")
-    raise RuntimeError("Could not resolve Chrome CDP websocket. Tried: " + " | ".join(errors))
-
-
-def restart_harness_daemon(name: str = "x-reply-bot") -> None:
-    harness_root = browser_harness_root()
-    script = (
-        "import sys; "
-        f"sys.path.insert(0, {json.dumps(str(harness_root))}); "
-        "from admin import restart_daemon; "
-        f"restart_daemon({json.dumps(name)})"
-    )
-    subprocess.run(
-        ["python3", "-c", script],
-        cwd=str(harness_root),
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-
-
-def run_harness(code: str, timeout: int = 75) -> str:
-    errors: list[str] = []
-    for attempt in range(3):
-        env = os.environ.copy()
-        env["BU_CDP_WS"] = resolve_ws()
-        env.setdefault("BU_NAME", "x-reply-bot")
-        # Strip proxies from the *child* env only. browser-harness opens a
-        # websocket to local/LAN CDP; if a SOCKS proxy is exported, the
-        # websockets lib tries to tunnel CDP through it and fails with
-        # "requires python-socks". The outer Python's proxy env is preserved
-        # so chat_completion etc. can still reach LLM endpoints via proxy.
-        for proxy_var in (
-            "ALL_PROXY", "all_proxy",
-            "HTTPS_PROXY", "https_proxy",
-            "HTTP_PROXY", "http_proxy",
-            "SOCKS_PROXY", "socks_proxy",
-        ):
-            env.pop(proxy_var, None)
-        env.setdefault("NO_PROXY", "127.0.0.1,localhost,10.0.0.175")
-        env.setdefault("no_proxy", "127.0.0.1,localhost,10.0.0.175")
-        try:
-            # browser-harness on this host requires `-c "code"` form;
-            # piping via stdin makes it print its usage and exit 1.
-            proc = subprocess.run(
-                [browser_harness_bin(), "-c", code],
-                input="",
-                text=True,
-                capture_output=True,
-                env=env,
-                cwd=str(browser_harness_root()),
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            err = f"browser-harness timed out after {timeout}s\nSTDOUT:\n{exc.stdout or ''}\nSTDERR:\n{exc.stderr or ''}"
-            errors.append(err)
-            if attempt == 2:
-                raise RuntimeError(err)
-            restart_harness_daemon(env.get("BU_NAME", "x-reply-bot"))
-            time.sleep(2 + attempt)
-            continue
-        if proc.returncode == 0:
-            return proc.stdout
-
-        err = f"browser-harness exited {proc.returncode}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
-        errors.append(err)
-        lower = f"{proc.stdout}\n{proc.stderr}".lower()
-        retryable = proc.returncode < 0 or any(
-            marker in lower
-            for marker in [
-                "websocket connection closed",
-                "target closed",
-                "connection reset",
-                "session closed",
-                "inspected target navigated or closed",
-                "keepalive ping timeout",
-                "no close frame received",
-                "sent 1011",
-            ]
-        )
-        if not retryable or attempt == 2:
-            raise RuntimeError(err if attempt == 2 else err)
-        restart_harness_daemon(env.get("BU_NAME", "x-reply-bot"))
-        time.sleep(2 + attempt)
-
-    raise RuntimeError(errors[-1] if errors else "browser-harness failed")

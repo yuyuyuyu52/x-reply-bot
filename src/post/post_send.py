@@ -6,7 +6,8 @@ import json
 import textwrap
 from datetime import datetime, timezone
 
-from common import SCREENSHOT_DIR, append_log, ensure_state_dirs, load_env_file, run_harness
+from src.harness import harness_navigate_snippet, harness_compose_and_send_snippet
+from src.common import SCREENSHOT_DIR, append_log, ensure_state_dirs, load_env_file, run_harness
 
 
 def main() -> int:
@@ -33,25 +34,9 @@ post_text = {json.dumps(post_text, ensure_ascii=False)}
 match_snippet = {json.dumps(match_snippet, ensure_ascii=False)}
 ready_shot = {json.dumps(str(ready_shot))}
 posted_shot = {json.dumps(str(posted_shot))}
+target_url = 'https://x.com/home'
 
-tabs = list_tabs(include_chrome=False)
-x_tab = None
-for t in tabs:
-    if 'x.com/home' in t.get('url', ''):
-        x_tab = t
-        break
-if not x_tab:
-    for t in tabs:
-        if 'x.com' in t.get('url', ''):
-            x_tab = t
-            break
-if x_tab:
-    switch_tab(x_tab['targetId'])
-else:
-    tid = new_tab('https://x.com/home')
-    switch_tab(tid)
-
-current = page_info()
+{harness_navigate_snippet('target_url')}
 if current.get('dialog') or 'x.com/home' not in (current.get('url') or ''):
     js('window.onbeforeunload = null')
     goto_url('https://x.com/home')

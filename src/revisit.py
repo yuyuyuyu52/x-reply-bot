@@ -26,7 +26,7 @@ import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from common import (
+from src.common import (
     HISTORY_DIR,
     LATEST_REVISIT_RUN_PATH,
     POST_HISTORY_DIR,
@@ -43,7 +43,7 @@ DEFAULT_MAX_PER_RUN = 20
 
 # Reuse the proven metric extractors from observe_feed.py rather than
 # duplicating regexes — those have been tuned against real X DOM.
-from observe_feed import engagement_score, infer_own_handle, parse_metrics  # noqa: E402
+from src.metrics import engagement_score, infer_own_handle, parse_metrics  # noqa: E402
 
 
 def parse_record_time(record: dict) -> datetime | None:

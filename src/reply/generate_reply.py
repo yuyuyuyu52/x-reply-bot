@@ -4,15 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 
-from common import (
+from src.common import (
     SELECTED_PATH,
     chat_json_result,
     ensure_state_dirs,
     load_env_file,
     load_json,
 )
-from learning_store import recent_learning_references
-from persona_store import get_generation_context
+from src.context_builder import build_learning_context, build_persona_context
 
 DEFAULT_PROMPT = """You write short, natural X replies.
 
@@ -37,57 +36,11 @@ Rules:
 """
 
 
-def _build_learning_context() -> str:
-    try:
-        refs = recent_learning_references(limit=4)
-        if not refs:
-            return ""
-        lines = ["【近期高互动帖规律】"]
-        for r in refs:
-            hook = (r.get("hook_type") or "").strip()
-            why = (r.get("why_it_works") or "").strip()
-            takeaway = (r.get("imitation_takeaway") or "").strip()
-            if hook and why:
-                entry = f"- {hook} → {why}"
-                if takeaway:
-                    entry += f"（可借鉴：{takeaway}）"
-                lines.append(entry)
-        if len(lines) == 1:
-            return ""
-        return "\n".join(lines)[:500]
-    except Exception:
-        return ""
-
-
-def _build_persona_context() -> str:
-    try:
-        ctx = get_generation_context()
-        static = ctx.get("static") or {}
-        if not static:
-            return ""
-        parts = []
-        for k, v in list(static.items())[:6]:
-            if isinstance(v, str) and v.strip():
-                parts.append(f"{k}: {v.strip()}")
-            elif isinstance(v, list) and v:
-                items = [str(x).strip() for x in v[:3] if str(x).strip()]
-                if items:
-                    parts.append(f"{k}: " + " / ".join(x[:50] for x in items))
-        recent_posts = ctx.get("recent_posts") or []
-        if recent_posts:
-            samples = [p["text"][:60] for p in recent_posts[-3:] if p.get("text")]
-            if samples:
-                parts.append("近期发帖: " + " / ".join(samples))
-        if not parts:
-            return ""
-        return ("【账号人设】\n" + "\n".join(parts))[:600]
-    except Exception:
-        return ""
 
 
 def build_messages(post: dict, system_prompt: str) -> list[dict]:
     learning_ctx = _build_learning_context()
-    persona_ctx = _build_persona_context()
+    persona_ctx = build_persona_context()
 
     system_parts = [system_prompt]
     if learning_ctx:

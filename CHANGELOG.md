@@ -8,6 +8,8 @@ omitted unless they alter how the bot is configured or operated.
 ## [Unreleased]
 
 ### Added
+- 支持引用推文和转发：`generate_reply.py` 更新了 Prompt 使其能选择 reply、quote 或 repost，`send_reply.py` 和 `run_once.py` 同步支持执行。
+- 自动关注高质量用户：`observe_feed.py` 遇到 quality_label 为 high_quality 的帖子时，会自动用 harness 点击 Follow 作者（每天最多关注 5 人）。
 - 回复反馈：`revisit.py` 现在也扫 `state/history/`，对发出 ≥24h 的回复打开原帖楼、滚动定位自己那条 nested reply（`reply_text` 完全匹配 + 自家 handle 兜底确认）、抓 aria-label 写入 `engagement_24h`；找不到时累计 attempts，3 次后标记 `failed`
 - `/revisit_status` 与每晚 24h 反馈摘要现在分别按 `post` / `reply` 计数与展示
 

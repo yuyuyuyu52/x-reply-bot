@@ -13,26 +13,28 @@ from src.common import (
 )
 from src.context_builder import build_learning_context, build_persona_context
 
-DEFAULT_PROMPT = """You write short, natural X replies.
+DEFAULT_PROMPT = """You evaluate an X post to decide whether to reply, quote tweet, or retweet (repost).
 
 Return strict JSON:
-{"reply":"...", "reason":"..."}
+{"action": "reply" | "quote" | "repost", "text":"...", "reason":"..."}
 
-Rules:
-- Reply in the same language as the post.
-- Sound like a real long-time X/Twitter user replying in public, not like an assistant.
+Action Rules:
+- "reply": You want to talk directly to the author or participants in the thread. This is the default.
+- "quote": The post is highly valuable or provocative, and you want to share it with your OWN followers with your added commentary.
+- "repost": The post is excellent and speaks for itself, you want to share it without adding text.
+
+Text Rules:
+- If action is "repost", `text` should be "".
+- If action is "reply" or "quote", write the content in `text`.
+- Reply/Quote in the same language as the post.
+- Sound like a real long-time X/Twitter user, not like an assistant.
 - Prefer one sharp point over a balanced summary.
-- It is okay to sound opinionated, as long as the reply still feels natural.
-- If the post is emotional or rant-like, match that energy lightly without becoming theatrical.
-- If the post overstates the case, narrow it with one short sentence instead of explaining at length.
+- It is okay to sound opinionated, as long as it feels natural.
 - Avoid generic filler like: "确实", "有道理", "本质上", "关键还是", "归根结底", "值得思考".
-- Avoid standard-model-answer phrasing.
 - No hashtags, no emojis, no em dashes (——), no marketing tone.
-- Chinese replies must stay under 70 characters.
-- English replies must stay under 35 words.
-- `reason` must be written in Chinese and should briefly state what concrete angle the reply adds.
-- Avoid AI-sounding phrasing.
-- The reply should feel like something a real account would casually post, not something polished for publication.
+- Chinese text must stay under 70 characters.
+- English text must stay under 35 words.
+- `reason` must be written in Chinese and briefly state your action choice and concrete angle.
 """
 
 
@@ -84,12 +86,19 @@ def build_messages(post: dict, system_prompt: str) -> list[dict]:
 def generate_reply_payload(post: dict, system_prompt: str = DEFAULT_PROMPT) -> dict:
     result = chat_json_result(build_messages(post, system_prompt), temperature=0.7, max_tokens=520)
     payload = result["payload"]
-    reply = str(payload.get("reply") or "").strip().replace("\n", " ")
+    action = str(payload.get("action") or "reply").strip().lower()
+    if action not in ["reply", "quote", "repost"]:
+        action = "reply"
+    
+    text = str(payload.get("text") or payload.get("reply") or "").strip().replace("\n", " ")
     reason = str(payload.get("reason") or "").strip().replace("\n", " ")
-    if not reply:
-        raise RuntimeError(f"Model returned empty reply payload: {payload}")
+    
+    if action in ["reply", "quote"] and not text:
+        raise RuntimeError(f"Model returned empty text for {action}: {payload}")
+        
     return {
-        "reply": reply,
+        "action": action,
+        "reply": text,
         "reason": reason,
         "source_post_url": str(post.get("url") or "").strip(),
         "selection_id": str(post.get("selection_id") or "").strip(),

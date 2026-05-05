@@ -364,6 +364,70 @@ def analyze_candidates(candidates: list[dict]) -> dict:
         "cost": estimate_cost(usage, model_name()),
     }
 
+def get_today_follow_count() -> int:
+    from src.learning_store import db_connect
+    today = datetime.now().astimezone().strftime("%Y-%m-%d")
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT count(*) as c FROM learned_posts WHERE observed_at LIKE ? AND raw_json LIKE '%"action": "followed"%'",
+            (f"{today}%",)
+        ).fetchone()
+        return row["c"] if row else 0
+
+def auto_follow_user(handle: str) -> dict:
+    if not handle:
+        return {"ok": False, "reason": "empty_handle"}
+        
+    try:
+        if get_today_follow_count() >= 5:
+            return {"ok": False, "reason": "daily_limit_reached", "action": "skipped"}
+    except Exception as e:
+        pass
+        
+    if handle.startswith("@"):
+        handle = handle[1:]
+        
+    code = f"""
+import json
+handle = {json.dumps(handle)}
+url = f'https://x.com/{{handle}}'
+
+{harness_navigate_snippet('url')}
+wait_for_load(20)
+wait(3)
+
+followed = js("""
+(() => {{
+  const btns = Array.from(document.querySelectorAll('[role="button"]'));
+  const followBtn = btns.find(btn => btn.innerText.includes('Follow') || btn.innerText.includes('关注'));
+  const followingBtn = btns.find(btn => btn.innerText.includes('Following') || btn.innerText.includes('正在关注'));
+  
+  if (followingBtn) {{
+    return {{ok: true, action: 'already_following'}};
+  }}
+  if (followBtn) {{
+    followBtn.click();
+    return {{ok: true, action: 'followed'}};
+  }}
+  return {{ok: false, reason: 'button_not_found'}};
+}})()
+""") or {{}}
+
+wait(2)
+print(json.dumps({{
+    'ok': followed.get('ok', False),
+    'handle': handle,
+    'action': followed.get('action', ''),
+    'reason': followed.get('reason', '')
+}}, ensure_ascii=False, indent=2))
+"""
+    try:
+        stdout = run_harness(textwrap.dedent(code))
+        return json.loads(stdout)
+    except Exception as exc:
+        return {"ok": False, "handle": handle, "reason": "exception", "error": str(exc)}
+
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -412,6 +476,11 @@ def main() -> int:
                 high_quality_count += 1
             else:
                 worth_watching_count += 1
+                
+            follow_result = None
+            if quality_label == "high_quality" and item.get("author_handle"):
+                follow_result = auto_follow_user(item.get("author_handle"))
+                    
             record = {
                 **item,
                 "observed_at": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
@@ -431,6 +500,8 @@ def main() -> int:
                     "analysis": analysis,
                 },
             }
+            if follow_result:
+                record["follow_result"] = follow_result
             upsert_learning_post(record)
             saved_records.append(record)
 

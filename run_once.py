@@ -30,9 +30,15 @@ def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def notify_text(record: dict) -> str:
+    action = record.get('action', 'reply')
+    action_label = {
+        'reply': '💬 回复',
+        'quote': '🔁 引用 (Quote)',
+        'repost': '🔄 转发 (Repost)'
+    }.get(action, '💬 回复')
     text = "\n".join(
         [
-            "💬 回复",
+            action_label,
             "",
             f"🕒 时间: {record['time_beijing']}",
             f"⚙️ 触发: {record['trigger']}",
@@ -43,10 +49,10 @@ def notify_text(record: dict) -> str:
             "📄 帖子内容:",
             record["post_text"],
             "",
-            "💭 回复内容:",
+            f"💭 {action}内容:",
             record["reply_text"],
             "",
-            "🧠 回复理由:",
+            "🧠 理由:",
             record["reply_reason"],
         ]
     )
@@ -100,12 +106,13 @@ def main() -> int:
             return gen.returncode
         reply_payload = json.loads(gen.stdout)
         reply_text = str(reply_payload.get("reply") or "").strip()
+        action = str(reply_payload.get("action") or "reply").strip()
         reply_reason = str(reply_payload.get("reason") or "").strip()
         reply_source_url = str(reply_payload.get("source_post_url") or "").strip()
         reply_selection_id = str(reply_payload.get("selection_id") or "").strip()
         reply_usage = reply_payload.get("usage") or {}
         reply_cost = reply_payload.get("cost") or {}
-        print("GENERATED_REPLY")
+        print(f"GENERATED_ACTION: {action}")
         print(reply_text)
 
         selected_url = str(selected.get("url") or "").strip()
@@ -127,7 +134,7 @@ def main() -> int:
             )
             return 1
 
-        send = run([sys.executable, str(ROOT / "src/reply/send_reply.py"), "--url", selected_url, "--reply", reply_text])
+        send = run([sys.executable, str(ROOT / "src/reply/send_reply.py"), "--url", selected_url, "--reply", reply_text, "--action", action])
         sys.stdout.write(send.stdout)
         sys.stderr.write(send.stderr)
 
@@ -145,6 +152,7 @@ def main() -> int:
             "post_url": selected.get("url", ""),
             "selection_reason": selected.get("selector_reason", ""),
             "post_text": selected.get("main_post_text", ""),
+            "action": action,
             "reply_text": reply_text,
             "reply_reason": reply_reason,
             "selection_model": selected.get("selection_model", ""),

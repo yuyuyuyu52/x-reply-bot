@@ -11,13 +11,17 @@ import time
 import traceback
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common import (
     DAILY_REPORT_STATE_PATH,
+    HISTORY_DIR,
     LATEST_POST_RUN_PATH,
+    LATEST_REVISIT_RUN_PATH,
     LATEST_RUN_PATH,
+    POST_HISTORY_DIR,
+    REVISIT_REPORT_STATE_PATH,
     TELEGRAM_STATE_PATH,
     ensure_state_dirs,
     load_env_file,
@@ -149,6 +153,39 @@ def next_learning_after(now: datetime) -> datetime:
     return now + timedelta(seconds=learning_interval_seconds())
 
 
+REVISIT_WINDOW_START_HOUR = 23  # inclusive
+REVISIT_WINDOW_END_HOUR = 7     # exclusive
+REVISIT_INTERVAL_SECONDS = 1800  # every 30 min while inside the window
+
+
+def in_revisit_window(now: datetime) -> bool:
+    """True iff `now` is inside the 23:00–07:00 nightly window."""
+    hour = now.hour
+    return hour >= REVISIT_WINDOW_START_HOUR or hour < REVISIT_WINDOW_END_HOUR
+
+
+def next_revisit_after(now: datetime) -> datetime:
+    """Next 30-minute slot inside the night window strictly after `now`.
+
+    If `now` is inside the window, return `now + 30 min` (with a small floor
+    to avoid immediate re-fire). If `now` is outside, return today's 23:00 if
+    that's still in the future, else tomorrow's 23:00.
+    """
+    if in_revisit_window(now):
+        return now + timedelta(seconds=REVISIT_INTERVAL_SECONDS)
+    today_start = now.replace(hour=REVISIT_WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
+    if today_start > now:
+        return today_start
+    return today_start + timedelta(days=1)
+
+
+def revisit_guard_seconds() -> int:
+    # Mirror the learning-job guard: don't start revisit if the next reply or
+    # post slot is within this many seconds. Reply slots only fire 07-23 so
+    # this only matters near the 07:00 boundary; small value is fine.
+    return 600
+
+
 def latest_summary() -> str:
     latest = load_json(LATEST_RUN_PATH, {})
     if not latest:
@@ -170,6 +207,7 @@ def status_text(
     next_run_at: datetime,
     next_post_run_at: datetime,
     next_learn_at: datetime,
+    next_revisit_at: datetime,
     active_label: str,
 ) -> str:
     now = datetime.now().astimezone()
@@ -183,6 +221,7 @@ def status_text(
     lines.append(format_kv("📝", "下次主动发帖", next_post_run_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
     if learning_enabled():
         lines.append(format_kv("👀", "下次观察学习", next_learn_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
+    lines.append(format_kv("📈", "下次反馈回访", next_revisit_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
     lines.append("")
     lines.append(latest_summary())
     return "\n".join(lines)
@@ -261,6 +300,130 @@ def learning_summary(next_learn_at: datetime) -> str:
                 f"{str(item.get('post_text') or '')[:80]}"
             )
     return "\n".join(lines)
+
+
+def revisit_counts() -> dict:
+    """Light-weight scan over post_history for revisit pipeline visibility."""
+    pending = 0
+    succeeded = 0
+    failed = 0
+    skipped = 0  # dry-runs / not-posted / no URL
+    waiting = 0  # posted but <24h old or already has metrics
+    now = datetime.now().astimezone()
+    for path in sorted(POST_HISTORY_DIR.glob("*.json")):
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if rec.get("dry_run") or rec.get("status") != "posted" or not rec.get("post_url"):
+            skipped += 1
+            continue
+        eng = rec.get("engagement_24h") or {}
+        if eng.get("metrics"):
+            succeeded += 1
+            continue
+        if eng.get("failed"):
+            failed += 1
+            continue
+        # posted, no metrics yet
+        try:
+            posted_at = datetime.strptime(rec.get("time_beijing", ""), "%Y-%m-%d %H:%M:%S CST").replace(tzinfo=timezone(timedelta(hours=8)))
+        except Exception:
+            posted_at = None
+        if posted_at and (now - posted_at) < timedelta(hours=24):
+            waiting += 1
+        else:
+            pending += 1
+    return {
+        "pending": pending,
+        "waiting_24h": waiting,
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+    }
+
+
+def revisit_summary(next_revisit_at: datetime) -> str:
+    counts = revisit_counts()
+    latest = load_json(LATEST_REVISIT_RUN_PATH, {})
+    lines = format_header("📈 反馈回访状态")
+    lines.extend(
+        [
+            format_kv("⏳", "待回访(>24h)", counts["pending"]),
+            format_kv("⌛", "等待中(<24h)", counts["waiting_24h"]),
+            format_kv("✅", "已成功", counts["succeeded"]),
+            format_kv("⚠️", "失败标记", counts["failed"]),
+            format_kv("⏭️", "跳过", counts["skipped"]),
+            format_kv("🌙", "下次回访", next_revisit_at.strftime('%Y-%m-%d %H:%M:%S %Z')),
+        ]
+    )
+    if latest:
+        lines.extend(
+            [
+                "",
+                format_kv("🕒", "最近时间", latest.get("time_beijing", "")),
+                format_kv("⚙️", "最近触发", latest.get("trigger", "")),
+                format_kv("📊", "最近处理", f"{latest.get('processed', 0)} 条 (✅{latest.get('succeeded', 0)} ⚠️{latest.get('failed', 0)})"),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def maybe_send_revisit_report(now: datetime, run_proc: subprocess.Popen[str] | None) -> None:
+    """Once per night, after revisits have run, push a 24h engagement digest."""
+    if not telegram_enabled() or (run_proc and run_proc.poll() is None):
+        return
+    if not in_revisit_window(now):
+        return
+
+    state = load_json(REVISIT_REPORT_STATE_PATH, {"last_reported_window": ""})
+    # The window key spans midnight: a 23:30 fire and a 03:00 fire on the
+    # next calendar day belong to the same window. Anchor to the date the
+    # window started.
+    window_start_date = (now if now.hour >= REVISIT_WINDOW_START_HOUR else now - timedelta(days=1)).strftime("%Y-%m-%d")
+    if state.get("last_reported_window") == window_start_date:
+        return
+
+    # Only summarize records that got their metrics filled today.
+    today = now.strftime("%Y-%m-%d")
+    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    completed_today: list[dict] = []
+    for path in sorted(POST_HISTORY_DIR.glob("*.json")):
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        eng = rec.get("engagement_24h") or {}
+        metrics = eng.get("metrics")
+        if not metrics:
+            continue
+        checked_at = str(eng.get("checked_at") or "")
+        if today not in checked_at and yesterday not in checked_at:
+            continue
+        completed_today.append({"record": rec, "metrics": metrics, "score": eng.get("score") or 0})
+
+    if not completed_today:
+        # Nothing to report yet; try again on the next loop tick.
+        return
+
+    completed_today.sort(key=lambda x: float(x.get("score") or 0), reverse=True)
+    lines = format_header("📈 24h 反馈汇总")
+    lines.append(format_kv("🌙", "窗口日期", window_start_date))
+    lines.append(format_kv("📊", "已回访", len(completed_today)))
+    lines.append("")
+    for item in completed_today[:5]:
+        rec = item["record"]
+        m = item["metrics"]
+        text = str(rec.get("post_text") or "")[:60]
+        lines.append(
+            f"• {rec.get('time_beijing', '')[:16]} 👁️{m.get('views',0)} 💚{m.get('likes',0)} 💬{m.get('replies',0)} 🔁{m.get('reposts',0)}"
+        )
+        lines.append(f"  📝 {text}")
+    try:
+        telegram_notify("\n".join(lines))
+        write_json(REVISIT_REPORT_STATE_PATH, {"last_reported_window": window_start_date})
+    except Exception as exc:
+        log(f"revisit report failed: {exc}")
 
 
 def start_job(script: str, trigger: str) -> subprocess.Popen[str]:
@@ -356,35 +519,36 @@ def handle_command(
     next_run_at: datetime,
     next_post_run_at: datetime,
     next_learn_at: datetime,
+    next_revisit_at: datetime,
     run_trigger: str,
     active_label: str,
-) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, str, str]:
+) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, datetime, str, str]:
     stripped = (text or "").strip()
     if not stripped:
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
     command = stripped.split()[0].lower()
     if command.startswith("/run"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
         _safe_notify("💬 回复\n\n✅ 已收到 /run，开始执行。")
-        return start_job("run_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, "telegram", "run_once.py"
+        return start_job("run_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "run_once.py"
 
     if command.startswith("/status"):
         _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, active_label))
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
     if command.startswith("/post_once"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
         _safe_notify("📝 主动发帖\n\n✅ 已收到 /post_once，开始执行。")
-        return start_job("post_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, "telegram", "post_once.py"
+        return start_job("post_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "post_once.py"
 
     if command.startswith("/post_dry_run"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
         _safe_notify("📝 主动发帖\n\n🧪 已收到 /post_dry_run，开始生成候选但不会发送。")
         return (
             subprocess.Popen(
@@ -397,39 +561,51 @@ def handle_command(
             next_run_at,
             next_post_run_at,
             next_learn_at,
+            next_revisit_at,
             "telegram",
             "post_once.py --dry-run",
         )
 
     if command.startswith("/post_status"):
         _safe_notify(post_summary(next_post_run_at))
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
     if command.startswith("/learn_status"):
         _safe_notify(learning_summary(next_learn_at))
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
     if command.startswith("/learn_once"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
         _safe_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
-        return start_job("observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, "telegram", "observe_feed.py"
+        return start_job("observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "observe_feed.py"
+
+    if command.startswith("/revisit_status"):
+        _safe_notify(revisit_summary(next_revisit_at))
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+
+    if command.startswith("/revisit_once"):
+        if run_proc and run_proc.poll() is None:
+            _safe_notify("⏳ 当前已有任务在执行。")
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        _safe_notify("📈 反馈回访\n\n✅ 已收到 /revisit_once，开始执行。")
+        return start_job("revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "revisit.py"
 
     if command.startswith("/event"):
         body = stripped[len("/event"):].strip()
         if not body:
             _safe_notify("⚠️ 用法：/event <事件描述>，例如：/event 今天和朋友聊了关于XX的事")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
         try:
             evt = persona_add_event(body)
             _safe_notify(f"✅ 已记录事件\n\n📅 {evt['timestamp']}\n📝 {evt['raw']}")
         except Exception as exc:
             log(f"persona_add_event failed: {exc}")
             _safe_notify(f"❌ 记录失败：{exc}")
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
-    return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+    return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
 
 def poll_updates(
@@ -437,11 +613,12 @@ def poll_updates(
     next_run_at: datetime,
     next_post_run_at: datetime,
     next_learn_at: datetime,
+    next_revisit_at: datetime,
     run_trigger: str,
     active_label: str,
-) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, str, str]:
+) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, datetime, str, str]:
     if not telegram_enabled():
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
     state = read_tg_state()
     params = {
@@ -461,7 +638,7 @@ def poll_updates(
             text = str(message.get("text") or "")
             if str(chat.get("id") or "") != allowed_chat:
                 continue
-            run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label = handle_command(
+            run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label = handle_command(
                 text,
                 run_proc,
                 next_run_at,
@@ -479,7 +656,7 @@ def poll_updates(
                     state["update_offset"] = new_offset
                 except Exception as exc:
                     log(f"telegram offset persist failed: {exc}")
-    return run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label
+    return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
 
 def main() -> int:
@@ -495,6 +672,7 @@ def main() -> int:
     next_run_at = next_scheduled_after(now)
     next_post_run_at = next_proactive_after(now)
     next_learn_at = next_learning_after(now)
+    next_revisit_at = next_revisit_after(now)
     run_proc: subprocess.Popen[str] | None = None
     run_trigger = ""
     active_label = ""
@@ -514,6 +692,11 @@ def main() -> int:
                     active_label != "run_once.py"
                     and next_run_at <= finished_at
                 )
+                carry_over_revisit_slot = (
+                    active_label != "revisit.py"
+                    and in_revisit_window(finished_at)
+                    and next_revisit_at <= finished_at
+                )
                 finish_run(run_proc, run_trigger, active_label or "job")
                 run_proc = None
                 run_trigger = ""
@@ -524,6 +707,7 @@ def main() -> int:
                 else:
                     next_post_run_at = next_proactive_after(finished_at)
                 next_learn_at = next_learning_after(finished_at)
+                next_revisit_at = finished_at if carry_over_revisit_slot else next_revisit_after(finished_at)
 
             if run_proc is None and now >= next_run_at:
                 run_proc = start_job("run_once.py", "schedule")
@@ -548,13 +732,25 @@ def main() -> int:
                 run_trigger = "schedule"
                 active_label = "observe_feed.py"
                 next_learn_at = next_learning_after(now)
+            elif (
+                run_proc is None
+                and in_revisit_window(now)
+                and now >= next_revisit_at
+                and (next_run_at - now).total_seconds() > revisit_guard_seconds()
+                and (next_post_run_at - now).total_seconds() > revisit_guard_seconds()
+            ):
+                run_proc = start_job("revisit.py", "schedule")
+                run_trigger = "schedule"
+                active_label = "revisit.py"
+                next_revisit_at = next_revisit_after(now)
 
             try:
-                run_proc, next_run_at, next_post_run_at, next_learn_at, run_trigger, active_label = poll_updates(
+                run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label = poll_updates(
                     run_proc,
                     next_run_at,
                     next_post_run_at,
                     next_learn_at,
+                    next_revisit_at,
                     run_trigger,
                     active_label,
                 )
@@ -565,6 +761,11 @@ def main() -> int:
                 maybe_send_daily_cost_report(now, run_proc)
             except Exception as exc:
                 log(f"daily cost report error: {exc}")
+
+            try:
+                maybe_send_revisit_report(now, run_proc)
+            except Exception as exc:
+                log(f"revisit report error: {exc}")
 
             time.sleep(5)
     finally:

@@ -19,6 +19,8 @@ COMMANDS = [
     {"command": "learn_once", "description": "立即观察学习一轮"},
     {"command": "learn_status", "description": "查看观察学习状态"},
     {"command": "event", "description": "记录一件近期发生的事，供发帖时参考"},
+    {"command": "revisit_once", "description": "立即跑一轮反馈回访"},
+    {"command": "revisit_status", "description": "查看反馈回访状态"},
 ]
 
 SCOPES = [

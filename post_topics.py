@@ -5,7 +5,7 @@ import argparse
 import json
 from datetime import datetime
 
-from common import ensure_state_dirs, load_env_file, load_post_topics, normalize_post_topic, save_post_topics, topic_summary_text
+from src.common import ensure_state_dirs, load_env_file, load_post_topics, normalize_post_topic, save_post_topics, topic_summary_text
 
 
 def main() -> int:

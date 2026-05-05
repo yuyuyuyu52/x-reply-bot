@@ -14,7 +14,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from common import (
+from src.common import (
     DAILY_REPORT_STATE_PATH,
     HISTORY_DIR,
     LATEST_POST_RUN_PATH,
@@ -33,8 +33,8 @@ from common import (
     telegram_token,
     write_json,
 )
-from learning_store import learning_counts, top_learning_posts
-from persona_store import add_event as persona_add_event
+from src.learning_store import learning_counts, top_learning_posts
+from src.persona_store import add_event as persona_add_event
 
 ROOT = Path(__file__).resolve().parent
 LOG_PATH = ROOT / "state" / "logs" / "bot.log"
@@ -602,7 +602,7 @@ def handle_command(
             _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
         _safe_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
-        return start_job("observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "observe_feed.py"
+        return start_job("src/observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "src/observe_feed.py"
 
     if command.startswith("/revisit_status"):
         _safe_notify(revisit_summary(next_revisit_at))
@@ -613,7 +613,7 @@ def handle_command(
             _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
         _safe_notify("📈 反馈回访\n\n✅ 已收到 /revisit_once，开始执行。")
-        return start_job("revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "revisit.py"
+        return start_job("src/revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "src/revisit.py"
 
     if command.startswith("/event"):
         body = stripped[len("/event"):].strip()
@@ -716,7 +716,7 @@ def main() -> int:
                     and next_run_at <= finished_at
                 )
                 carry_over_revisit_slot = (
-                    active_label != "revisit.py"
+                    active_label != "src/revisit.py"
                     and in_revisit_window(finished_at)
                     and next_revisit_at <= finished_at
                 )
@@ -751,9 +751,9 @@ def main() -> int:
                 and (next_run_at - now).total_seconds() > learning_guard_seconds()
                 and (next_post_run_at - now).total_seconds() > learning_guard_seconds()
             ):
-                run_proc = start_job("observe_feed.py", "schedule")
+                run_proc = start_job("src/observe_feed.py", "schedule")
                 run_trigger = "schedule"
-                active_label = "observe_feed.py"
+                active_label = "src/observe_feed.py"
                 next_learn_at = next_learning_after(now)
             elif (
                 run_proc is None
@@ -762,9 +762,9 @@ def main() -> int:
                 and (next_run_at - now).total_seconds() > revisit_guard_seconds()
                 and (next_post_run_at - now).total_seconds() > revisit_guard_seconds()
             ):
-                run_proc = start_job("revisit.py", "schedule")
+                run_proc = start_job("src/revisit.py", "schedule")
                 run_trigger = "schedule"
-                active_label = "revisit.py"
+                active_label = "src/revisit.py"
                 next_revisit_at = next_revisit_after(now)
 
             try:

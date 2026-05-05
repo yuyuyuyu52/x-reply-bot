@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import fcntl
 import argparse
 import json
 import subprocess
@@ -9,7 +8,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from common import (
+from src.common import (
+    exclusive_lock,
     LATEST_RUN_PATH,
     append_log,
     ensure_state_dirs,
@@ -73,7 +73,7 @@ def main() -> int:
     stamp = started.strftime("%Y%m%d_%H%M%S")
 
     try:
-        prep = run([sys.executable, str(ROOT / "prepare_post.py")])
+        prep = run([sys.executable, str(ROOT / "src/reply/prepare_post.py")])
         sys.stdout.write(prep.stdout)
         sys.stderr.write(prep.stderr)
         if prep.returncode != 0:
@@ -93,7 +93,7 @@ def main() -> int:
 
         selected = load_json(ROOT / "state" / "selected_post.json", {})
 
-        gen = run([sys.executable, str(ROOT / "generate_reply.py")])
+        gen = run([sys.executable, str(ROOT / "src/reply/generate_reply.py")])
         sys.stdout.write(gen.stderr)
         if gen.returncode != 0:
             sys.stdout.write(gen.stdout)
@@ -127,7 +127,7 @@ def main() -> int:
             )
             return 1
 
-        send = run([sys.executable, str(ROOT / "send_reply.py"), "--url", selected_url, "--reply", reply_text])
+        send = run([sys.executable, str(ROOT / "src/reply/send_reply.py"), "--url", selected_url, "--reply", reply_text])
         sys.stdout.write(send.stdout)
         sys.stderr.write(send.stderr)
 

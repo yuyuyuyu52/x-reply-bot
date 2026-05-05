@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from common import (
+from src.common import (
+    exclusive_lock,
     LATEST_POST_RUN_PATH,
     ensure_state_dirs,
     load_env_file,
@@ -21,9 +21,9 @@ from common import (
     telegram_notify,
     write_json,
 )
-from post_generate import generate_post_plan
-from topic_auto import generate_auto_topic
-from persona_store import add_recent_post
+from src.post.post_generate import generate_post_plan
+from src.post.topic_auto import generate_auto_topic
+from src.persona_store import add_recent_post
 
 ROOT = Path(__file__).resolve().parent
 POST_LOCK_PATH = ROOT / "state" / "post_once.lock"

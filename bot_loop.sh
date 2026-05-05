@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export TZ=Asia/Shanghai
-cd /home/will/x-reply-bot
+source "$(dirname "$0")/scripts/_common.sh"
+
+export TZ="${X_REPLY_TZ:-Asia/Shanghai}"
+cd "$X_REPLY_ROOT"
 
 mkdir -p state/logs
 exec 9>"state/bot.lock"
@@ -11,4 +13,4 @@ if ! flock -n 9; then
   exit 0
 fi
 
-exec python3 /home/will/x-reply-bot/bot_daemon.py
+exec "$X_REPLY_PYTHON" "$X_REPLY_ROOT/bot_daemon.py"

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export TZ=Asia/Shanghai
-cd /home/will/x-reply-bot
+source "$(dirname "$0")/scripts/_common.sh"
+
+export TZ="${X_REPLY_TZ:-Asia/Shanghai}"
+cd "$X_REPLY_ROOT"
 
 mkdir -p state/logs
 exec 9>"state/run.lock"
@@ -38,6 +40,6 @@ timestamp() {
     echo "jitter_sleep=0s"
   fi
 
-  python3 run_once.py
+  "$X_REPLY_PYTHON" "$X_REPLY_ROOT/run_once.py"
   echo
 } >> "state/logs/cron.log" 2>&1

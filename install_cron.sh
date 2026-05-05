@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script="/home/will/x-reply-bot/scheduled_run.sh"
+source "$(dirname "$0")/scripts/_common.sh"
+
+script="$X_REPLY_ROOT/scheduled_run.sh"
 legacy="# x-reply-bot schedule"
 begin="# BEGIN x-reply-bot schedule"
 end="# END x-reply-bot schedule"
-cron_tz="CRON_TZ=Asia/Shanghai"
+cron_tz="CRON_TZ=${X_REPLY_TZ:-Asia/Shanghai}"
 job="0 7-23 * * * /usr/bin/env bash ${script}"
 
 existing="$(crontab -l 2>/dev/null || true)"

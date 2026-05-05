@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /home/will/x-reply-bot
-session="x-reply-bot"
+source "$(dirname "$0")/scripts/_common.sh"
 
-if tmux has-session -t "$session" 2>/dev/null; then
-  tmux kill-session -t "$session"
-  echo "stopped bot: session=$session"
+cd "$X_REPLY_ROOT"
+
+if tmux has-session -t "$X_REPLY_TMUX_SESSION" 2>/dev/null; then
+  tmux kill-session -t "$X_REPLY_TMUX_SESSION"
+  echo "stopped bot: session=$X_REPLY_TMUX_SESSION"
 else
   echo "bot not running"
 fi

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /home/will/x-reply-bot
-session="x-reply-bot"
+source "$(dirname "$0")/scripts/_common.sh"
 
-if tmux has-session -t "$session" 2>/dev/null; then
-  pid="$(tmux list-panes -t "$session" -F '#{pane_pid}' | head -n 1)"
-  echo "bot running: session=$session pid=$pid"
+cd "$X_REPLY_ROOT"
+
+if tmux has-session -t "$X_REPLY_TMUX_SESSION" 2>/dev/null; then
+  pid="$(tmux list-panes -t "$X_REPLY_TMUX_SESSION" -F '#{pane_pid}' | head -n 1)"
+  echo "bot running: session=$X_REPLY_TMUX_SESSION pid=$pid"
   exit 0
 fi
 

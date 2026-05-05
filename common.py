@@ -24,6 +24,8 @@ POST_TOPICS_PATH = STATE_DIR / "post_topics.json"
 PERSONA_PATH = STATE_DIR / "persona.json"
 TELEGRAM_STATE_PATH = STATE_DIR / "telegram_state.json"
 DAILY_REPORT_STATE_PATH = STATE_DIR / "daily_report_state.json"
+LATEST_REVISIT_RUN_PATH = STATE_DIR / "latest_revisit_run.json"
+REVISIT_REPORT_STATE_PATH = STATE_DIR / "revisit_report_state.json"
 ENV_PATH = ROOT / ".env"
 VALID_POST_TOPIC_TYPES = {"news_react", "story", "argument", "casual"}
 

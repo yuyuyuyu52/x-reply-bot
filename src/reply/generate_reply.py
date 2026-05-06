@@ -4,6 +4,10 @@ from __future__ import annotations
 import argparse
 import json
 
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
 from src.common import (
     SELECTED_PATH,
     chat_json_result,
@@ -117,6 +121,7 @@ def main() -> int:
     ensure_state_dirs()
     selected = load_json(SELECTED_PATH, {})
     if not selected.get("ok"):
+        logger.warning("no prepared post found")
         print("No prepared post found. Run prepare_post.py first.")
         return 2
 

@@ -12,6 +12,10 @@ import time
 import urllib.request
 from pathlib import Path
 
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def browser_harness_bin() -> str:
     return os.environ.get(
@@ -70,6 +74,9 @@ def restart_harness_daemon(name: str = "x-reply-bot") -> None:
 
 
 def run_harness(code: str, timeout: int = 75) -> str:
+    started = time.time()
+    code_preview = code[:200].replace("\n", " ").strip()
+    logger.info("run_harness start timeout=%ds code=%s", timeout, code_preview)
     errors: list[str] = []
     for attempt in range(3):
         env = os.environ.copy()
@@ -96,15 +103,19 @@ def run_harness(code: str, timeout: int = 75) -> str:
         except subprocess.TimeoutExpired as exc:
             err = f"browser-harness timed out after {timeout}s\nSTDOUT:\n{exc.stdout or ''}\nSTDERR:\n{exc.stderr or ''}"
             errors.append(err)
+            logger.warning("run_harness attempt=%d/%d timed out after %ds", attempt + 1, 3, timeout)
             if attempt == 2:
                 raise RuntimeError(err)
             restart_harness_daemon(env.get("BU_NAME", "x-reply-bot"))
             time.sleep(2 + attempt)
             continue
         if proc.returncode == 0 and proc.stdout.strip():
+            elapsed = time.time() - started
+            logger.info("run_harness ok attempt=%d/%d elapsed=%.2fs output_len=%d", attempt + 1, 3, elapsed, len(proc.stdout.strip()))
             return proc.stdout
         if proc.returncode == 0:
             err = f"browser-harness returned empty stdout (exit 0)"
+            logger.warning("run_harness attempt=%d/%d empty stdout", attempt + 1, 3)
             errors.append(err)
             restart_harness_daemon(env.get("BU_NAME", "x-reply-bot"))
             time.sleep(2 + attempt)
@@ -126,7 +137,9 @@ def run_harness(code: str, timeout: int = 75) -> str:
                 "sent 1011",
             ]
         )
+        logger.warning("run_harness attempt=%d/%d exit=%d retryable=%s stderr=%s", attempt + 1, 3, proc.returncode, retryable, (proc.stderr or "")[:200])
         if not retryable or attempt == 2:
+            logger.error("run_harness final failure after %.2fs attempts=%d retryable=%s exit=%d", time.time() - started, attempt + 1, retryable, proc.returncode)
             raise RuntimeError(err if attempt == 2 else err)
         restart_harness_daemon(env.get("BU_NAME", "x-reply-bot"))
         time.sleep(2 + attempt)

@@ -23,9 +23,12 @@ from src.common import (
     telegram_notify,
     write_json,
 )
+from src.logger import get_logger
 from src.post.post_generate import generate_post_plan
 from src.post.topic_auto import generate_auto_topic
 from src.persona_store import add_recent_post
+
+logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
 POST_LOCK_PATH = ROOT / "state" / "post_once.lock"
@@ -111,13 +114,16 @@ def main() -> int:
 
     started = datetime.now().astimezone()
     stamp = started.strftime("%Y%m%d_%H%M%S")
+    logger.info("post_once start trigger=%s dry_run=%s stamp=%s", args.trigger, args.dry_run, stamp)
 
     try:
         topic = next_pending_post_topic()
         if not topic:
             try:
+                logger.info("post_once generating auto topic")
                 topic = generate_auto_topic()
             except Exception as exc:
+                logger.error("post_once auto_topic failed: %s", exc, exc_info=True)
                 payload = {
                     "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
                     "trigger": args.trigger,

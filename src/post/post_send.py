@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 
 from src.harness import harness_navigate_snippet, harness_compose_and_send_snippet
 from src.common import SCREENSHOT_DIR, append_log, ensure_state_dirs, load_env_file, run_harness
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def main() -> int:
@@ -17,10 +20,10 @@ def main() -> int:
     args = parser.parse_args()
     post_text = args.text.strip()
     if not post_text:
-        print("ERROR: empty post text")
+        logger.error("empty post text")
         return 2
     if len(post_text) > 280:
-        print("ERROR: post too long")
+        logger.error("post too long")
         return 2
 
     ensure_state_dirs()
@@ -197,7 +200,7 @@ else:
                 "error": str(exc),
             }
         )
-        print(f"ERROR: {exc}")
+        logger.error("%s", exc, exc_info=True)
         return 1
 
 

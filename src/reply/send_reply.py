@@ -17,6 +17,9 @@ from src.common import (
     run_harness,
     write_json,
 )
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def main() -> int:
@@ -30,13 +33,13 @@ def main() -> int:
     action = args.action.strip()
     
     if action in ["reply", "quote"] and not reply:
-        print(f"ERROR: empty text for {action}")
+        logger.error("empty text for action=%s", action)
         return 2
     if not url:
-        print("ERROR: empty url")
+        logger.error("empty url")
         return 2
     if len(reply) > 240:
-        print("ERROR: reply too long; keep it short and human")
+        logger.error("reply too long; keep it short and human")
         return 2
 
     ensure_state_dirs()
@@ -160,7 +163,7 @@ else:
                 "error": str(exc),
             }
         )
-        print(f"ERROR: {exc}")
+        logger.error("%s", exc, exc_info=True)
         return 1
 
 

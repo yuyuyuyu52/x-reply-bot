@@ -32,6 +32,9 @@ from src.learning_store import (
     record_learning_run,
     upsert_learning_post,
 )
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCK_PATH = ROOT / "state" / "observe_feed.lock"
@@ -171,8 +174,8 @@ print(json.dumps(list(seen.values()), ensure_ascii=False, indent=2))
         data = json.loads(output)
         return data if isinstance(data, list) else []
     except (json.JSONDecodeError, ValueError) as exc:
-        print(f"observe_feed JSONDecodeError: {exc}")
-        print(f"raw output ({len(output)} chars): {output[:500]}")
+        logger.error("JSONDecodeError: %s", exc, exc_info=True)
+        logger.error("raw output (%d chars): %s", len(output), output[:500])
         return []
 
 
@@ -468,7 +471,7 @@ def main() -> int:
     try:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        print("observe_feed already running")
+        logger.warning("observe_feed already running")
         return 3
 
     started = datetime.now().astimezone()

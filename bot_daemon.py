@@ -36,8 +36,11 @@ from src.common import (
 from src.learning_store import learning_counts, top_learning_posts
 from src.persona_store import add_event as persona_add_event
 
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
 ROOT = Path(__file__).resolve().parent
-LOG_PATH = ROOT / "state" / "logs" / "bot.log"
 LOCK_PATH = ROOT / "state" / "bot.lock"
 
 
@@ -49,23 +52,13 @@ def format_kv(icon: str, label: str, value) -> str:
     return f"{icon} {label}: {value}"
 
 
-def log(message: str) -> None:
-    timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(f"[{timestamp}] {message}\n")
-    except Exception:
-        pass
-
-
 def _safe_notify(text: str) -> None:
     if not telegram_enabled():
         return
     try:
         telegram_notify(text)
     except Exception as exc:
-        log(f"telegram_notify failed: {exc}")
+        logger.warning(f"telegram_notify failed: {exc}")
 
 
 def tg_api(method: str, params: dict | None = None, timeout: int = 30) -> dict:
@@ -446,7 +439,7 @@ def maybe_send_revisit_report(now: datetime, run_proc: subprocess.Popen[str] | N
         telegram_notify("\n".join(lines))
         write_json(REVISIT_REPORT_STATE_PATH, {"last_reported_window": window_start_date})
     except Exception as exc:
-        log(f"revisit report failed: {exc}")
+        logger.warning(f"revisit report failed: {exc}")
 
 
 def _child_env() -> dict:
@@ -456,7 +449,7 @@ def _child_env() -> dict:
 
 
 def start_job(script: str, trigger: str) -> subprocess.Popen[str]:
-    log(f"{script} start trigger={trigger}")
+    logger.info(f"{script} start trigger={trigger}")
     return subprocess.Popen(
         [sys.executable, str(ROOT / script), "--trigger", trigger],
         cwd=str(ROOT),
@@ -470,9 +463,9 @@ def start_job(script: str, trigger: str) -> subprocess.Popen[str]:
 def finish_run(run_proc: subprocess.Popen[str], trigger: str, label: str) -> None:
     output = run_proc.stdout.read() if run_proc.stdout else ""
     for line in (output or "").splitlines():
-        log(f"{label}[{trigger}] {line}")
+        logger.info(f"{label}[{trigger}] {line}")
     code = run_proc.returncode
-    log(f"{label} end trigger={trigger} code={code}")
+    logger.info(f"{label} end trigger={trigger} code={code}")
     if code != 0 and telegram_enabled():
         try:
             telegram_notify(
@@ -490,7 +483,7 @@ def finish_run(run_proc: subprocess.Popen[str], trigger: str, label: str) -> Non
                 )
             )
         except Exception as exc:
-            log(f"telegram failure notify failed: {exc}")
+            logger.warning(f"telegram failure notify failed: {exc}")
 
 
 def aggregate_daily_costs(date_str: str) -> dict:
@@ -632,7 +625,7 @@ def handle_command(
             evt = persona_add_event(body)
             _safe_notify(f"✅ 已记录事件\n\n📅 {evt['timestamp']}\n📝 {evt['raw']}")
         except Exception as exc:
-            log(f"persona_add_event failed: {exc}")
+            logger.warning(f"persona_add_event failed: {exc}")
             _safe_notify(f"❌ 记录失败：{exc}")
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
@@ -680,14 +673,14 @@ def poll_updates(
                 active_label,
             )
         except Exception as exc:
-            log(f"telegram update {update_id} handler error: {exc}")
+            logger.warning(f"telegram update {update_id} handler error: {exc}")
         finally:
             if new_offset != state.get("update_offset", 0):
                 try:
                     write_tg_state({"update_offset": new_offset})
                     state["update_offset"] = new_offset
                 except Exception as exc:
-                    log(f"telegram offset persist failed: {exc}")
+                    logger.warning(f"telegram offset persist failed: {exc}")
     return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
 
@@ -698,7 +691,7 @@ def main() -> int:
     try:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        log("bot daemon already running")
+        logger.warning("bot daemon already running")
         return 0
     now = datetime.now().astimezone()
     next_run_at = next_scheduled_after(now)
@@ -710,7 +703,7 @@ def main() -> int:
     active_label = ""
 
     try:
-        log("bot daemon started")
+        logger.info("bot daemon started")
         while True:
             now = datetime.now().astimezone()
 
@@ -787,17 +780,17 @@ def main() -> int:
                     active_label,
                 )
             except Exception as exc:
-                log(f"telegram poll error: {exc}")
+                logger.warning(f"telegram poll error: {exc}")
 
             try:
                 maybe_send_daily_cost_report(now, run_proc)
             except Exception as exc:
-                log(f"daily cost report error: {exc}")
+                logger.warning(f"daily cost report error: {exc}")
 
             try:
                 maybe_send_revisit_report(now, run_proc)
             except Exception as exc:
-                log(f"revisit report error: {exc}")
+                logger.warning(f"revisit report error: {exc}")
 
             time.sleep(5)
     finally:
@@ -814,6 +807,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         raise
     except Exception:
-        log("bot daemon crashed")
-        log(traceback.format_exc())
+        logger.error("bot daemon crashed")
+        logger.error(traceback.format_exc())
         raise

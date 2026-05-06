@@ -23,6 +23,9 @@ from src.common import (
     run_harness,
     write_json,
 )
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 SELECTION_PROMPT = """You select one X post from a shortlist for an autonomous reply bot.
 
@@ -348,15 +351,18 @@ print(json.dumps(out, ensure_ascii=False, indent=2))
 def main() -> int:
     load_env_file()
     ensure_state_dirs()
+    logger.info("prepare_post start")
 
     replied = set(load_json(REPLIED_PATH, {"posts": []}).get("posts", []))
     feed = collect_feed_posts()
     if not feed.get("ok"):
+        logger.error("prepare_post feed collection failed")
         print(json.dumps(feed, ensure_ascii=False, indent=2))
         return 1
 
     candidates = shortlist_candidates(feed.get("posts") or [], replied)
     if not candidates:
+        logger.warning("prepare_post no suitable feed candidates")
         payload = {
             "ok": False,
             "reason": "no_suitable_feed_candidates",
@@ -369,6 +375,7 @@ def main() -> int:
     try:
         selection = choose_candidate_with_ai(candidates)
     except Exception as exc:
+        logger.error("prepare_post AI selection exception: %s", exc, exc_info=True)
         payload = {
             "ok": False,
             "reason": "ai_selection_exception",

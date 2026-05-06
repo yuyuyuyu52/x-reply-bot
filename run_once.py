@@ -22,6 +22,9 @@ from src.common import (
     telegram_notify,
     write_json,
 )
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
 RUN_LOCK_PATH = ROOT / "state" / "run_once.lock"
@@ -81,8 +84,10 @@ def main() -> int:
 
     started = datetime.now().astimezone()
     stamp = started.strftime("%Y%m%d_%H%M%S")
+    logger.info("run_once start trigger=%s stamp=%s", args.trigger, stamp)
 
     try:
+        logger.info("run_once step=prepare")
         prep = run([sys.executable, str(ROOT / "src/reply/prepare_post.py")])
         sys.stdout.write(prep.stdout)
         sys.stderr.write(prep.stderr)
@@ -90,6 +95,7 @@ def main() -> int:
             selected = load_json(ROOT / "state" / "selected_post.json", {})
             prep_reason = str(selected.get("reason") or "").strip()
             if prep_reason in {"ai_rejected_all_candidates", "no_suitable_feed_candidates"}:
+                logger.warning("run_once skipped reason=%s", prep_reason)
                 append_log(
                     {
                         "time": started.isoformat(),
@@ -99,13 +105,16 @@ def main() -> int:
                     }
                 )
                 return 0
+            logger.error("run_once prepare failed exit=%d", prep.returncode)
             return prep.returncode
 
         selected = load_json(ROOT / "state" / "selected_post.json", {})
 
+        logger.info("run_once step=generate")
         gen = run([sys.executable, str(ROOT / "src/reply/generate_reply.py")])
         sys.stdout.write(gen.stderr)
         if gen.returncode != 0:
+            logger.error("run_once generate failed exit=%d", gen.returncode)
             sys.stdout.write(gen.stdout)
             return gen.returncode
         reply_payload = json.loads(gen.stdout)
@@ -122,6 +131,8 @@ def main() -> int:
         selected_url = str(selected.get("url") or "").strip()
         selected_selection_id = str(selected.get("selection_id") or "").strip()
         if reply_source_url != selected_url or reply_selection_id != selected_selection_id:
+            logger.error("run_once mismatch selected_url=%s reply_url=%s selected_id=%s reply_id=%s",
+                         selected_url, reply_source_url, selected_selection_id, reply_selection_id)
             print(
                 json.dumps(
                     {
@@ -138,6 +149,7 @@ def main() -> int:
             )
             return 1
 
+        logger.info("run_once step=send action=%s", action)
         send = run([sys.executable, str(ROOT / "src/reply/send_reply.py"), "--url", selected_url, "--reply", reply_text, "--action", action])
         sys.stdout.write(send.stdout)
         sys.stderr.write(send.stderr)

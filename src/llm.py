@@ -12,6 +12,9 @@ import urllib.error
 import urllib.request
 
 from src.common import env_first, model_name, base_url, api_key
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def provider_mode() -> str:
@@ -59,12 +62,15 @@ def post_json_with_retries(url: str, payload: dict, headers: dict[str, str], *, 
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             last_error = RuntimeError(f"{label} API error {exc.code}: {detail}")
-            if attempt < 3 and should_retry_http_error(exc.code, detail):
+            retryable = attempt < 3 and should_retry_http_error(exc.code, detail)
+            logger.warning("%s HTTP %d attempt=%d/%d retryable=%s detail=%s", label, exc.code, attempt + 1, 4, retryable, detail[:300])
+            if retryable:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             raise last_error from exc
         except urllib.error.URLError as exc:
             last_error = RuntimeError(f"{label} transport error: {exc}")
+            logger.warning("%s transport error attempt=%d/%d: %s", label, attempt + 1, 4, exc)
             if attempt < 3:
                 time.sleep(1.5 * (attempt + 1))
                 continue
@@ -135,9 +141,26 @@ def chat_completion(
     if not key:
         raise RuntimeError("Missing ANTHROPIC_API_KEY, X_REPLY_API_KEY, or OPENAI_API_KEY.")
 
-    if provider_mode() == "anthropic":
-        return anthropic_completion(messages, temperature=temperature, max_tokens=max_tokens)
+    m = model_name()
+    prompt_chars = sum(len(str(item.get("content") or "")) for item in messages)
+    logger.info("chat_completion start provider=%s model=%s messages=%d prompt_chars=%d temp=%.2f max_tokens=%s",
+                 provider_mode(), m, len(messages), prompt_chars, temperature, max_tokens)
 
+    t0 = time.time()
+    if provider_mode() == "anthropic":
+        data = anthropic_completion(messages, temperature=temperature, max_tokens=max_tokens)
+    else:
+        data = _openai_completion(messages, temperature=temperature, max_tokens=max_tokens)
+
+    return data
+
+
+def _openai_completion(
+    messages: list[dict],
+    *,
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+) -> dict:
     system_parts: list[str] = []
     normalized_messages: list[dict] = []
     for item in messages:
@@ -175,7 +198,7 @@ def chat_completion(
         payload,
         {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
+            "Authorization": f"Bearer {api_key()}",
         },
         label="OpenAI-compatible",
     )
@@ -356,10 +379,14 @@ def chat_text_result(
             f"Empty model response: id={data.get('id')} stop_reason={stop_reason} model={data.get('model')}"
         )
     usage = extract_usage(data)
+    cost = estimate_cost(usage, data.get("model") or model_name())
+    logger.info("chat_text_result done model=%s prompt=%d completion=%d total=%d cost_cny=%.6f content_len=%d",
+                 cost["model"], usage["prompt_tokens"], usage["completion_tokens"],
+                 usage["total_tokens"], cost["total_cost"], len(content))
     return {
         "content": content,
         "usage": usage,
-        "cost": estimate_cost(usage, data.get("model") or model_name()),
+        "cost": cost,
         "raw": data,
     }
 

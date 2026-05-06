@@ -451,7 +451,7 @@ def maybe_send_revisit_report(now: datetime, run_proc: subprocess.Popen[str] | N
 
 def _child_env() -> dict:
     env = os.environ.copy()
-    env.setdefault("PYTHONPATH", str(ROOT))
+    env["PYTHONPATH"] = str(ROOT)
     return env
 
 
@@ -565,7 +565,7 @@ def handle_command(
         return start_job("run_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "run_once.py"
 
     if command.startswith("/status"):
-        _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, active_label))
+        _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, active_label))
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
 
     if command.startswith("/post_once"):

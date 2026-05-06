@@ -33,7 +33,7 @@ POST_LOCK_PATH = ROOT / "state" / "post_once.lock"
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env.setdefault("PYTHONPATH", str(ROOT))
+    env["PYTHONPATH"] = str(ROOT)
     return subprocess.run(cmd, text=True, capture_output=True, cwd=str(ROOT), env=env)
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source "$(dirname "$0")/scripts/_common.sh"
+source "$(dirname "$0")/_common.sh"
 
 export TZ="${X_REPLY_TZ:-Asia/Shanghai}"
 cd "$X_REPLY_ROOT"

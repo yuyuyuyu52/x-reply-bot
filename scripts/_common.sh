@@ -6,7 +6,7 @@
 # long as the repo layout is intact.
 #
 # Usage:
-#   source "$(dirname "$0")/scripts/_common.sh"
+#   source "$(dirname "$0")/_common.sh"
 #   # Now $X_REPLY_ROOT, $X_REPLY_PYTHON are guaranteed.
 
 set -euo pipefail

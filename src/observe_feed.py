@@ -33,7 +33,7 @@ from src.learning_store import (
     upsert_learning_post,
 )
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 LOCK_PATH = ROOT / "state" / "observe_feed.lock"
 FOLLOW_TODAY_PATH = ROOT / "state" / "follow_today.json"
 

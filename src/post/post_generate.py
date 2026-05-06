@@ -13,6 +13,7 @@ from src.common import (
     parse_json_object,
     topic_summary_text,
 )
+from src.learning_store import recent_learning_references
 from src.context_builder import build_learning_context, build_persona_context, persona_context_dict
 
 CANDIDATE_PROMPT = """你在为一个真实的 X 账号写主动发帖。
@@ -300,7 +301,7 @@ def rewrite_selected_candidate(topic: dict, candidate: dict, review_reason: str,
 
 def generate_post_plan(topic: dict) -> dict:
     topic = normalize_post_topic(topic)
-    persona_context = get_generation_context()
+    persona_context = persona_context_dict()
     if not topic_summary_text(topic):
         raise RuntimeError("Empty topic.")
 

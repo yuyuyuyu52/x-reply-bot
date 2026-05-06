@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import fcntl
 import re
 import textwrap
 from collections import Counter
@@ -11,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.harness import harness_navigate_snippet
+from src.metrics import engagement_score, infer_own_handle, parse_metrics
 from src.common import (
     exclusive_lock,
     BLOCK_PATTERNS,

@@ -449,6 +449,12 @@ def maybe_send_revisit_report(now: datetime, run_proc: subprocess.Popen[str] | N
         log(f"revisit report failed: {exc}")
 
 
+def _child_env() -> dict:
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", str(ROOT))
+    return env
+
+
 def start_job(script: str, trigger: str) -> subprocess.Popen[str]:
     log(f"{script} start trigger={trigger}")
     return subprocess.Popen(
@@ -457,6 +463,7 @@ def start_job(script: str, trigger: str) -> subprocess.Popen[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        env=_child_env(),
     )
 
 
@@ -580,6 +587,7 @@ def handle_command(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                env=_child_env(),
             ),
             next_run_at,
             next_post_run_at,

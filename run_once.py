@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import os
+import fcntl
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +28,9 @@ RUN_LOCK_PATH = ROOT / "state" / "run_once.lock"
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, text=True, capture_output=True, cwd=str(ROOT))
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", str(ROOT))
+    return subprocess.run(cmd, text=True, capture_output=True, cwd=str(ROOT), env=env)
 
 
 def notify_text(record: dict) -> str:

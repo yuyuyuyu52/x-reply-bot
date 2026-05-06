@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import fcntl
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +32,9 @@ POST_LOCK_PATH = ROOT / "state" / "post_once.lock"
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, text=True, capture_output=True, cwd=str(ROOT))
+    env = os.environ.copy()
+    env.setdefault("PYTHONPATH", str(ROOT))
+    return subprocess.run(cmd, text=True, capture_output=True, cwd=str(ROOT), env=env)
 
 
 def notify_text(record: dict) -> str:
@@ -186,7 +190,7 @@ def main() -> int:
             print(json.dumps(record, ensure_ascii=False, indent=2))
             return 0
 
-        send = run([sys.executable, str(ROOT / "post_send.py"), "--text", record["post_text"]])
+        send = run([sys.executable, str(ROOT / "src/post/post_send.py"), "--text", record["post_text"]])
         sys.stdout.write(send.stdout)
         sys.stderr.write(send.stderr)
         record["send_returncode"] = send.returncode

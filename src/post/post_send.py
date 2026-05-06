@@ -37,6 +37,7 @@ posted_shot = {json.dumps(str(posted_shot))}
 target_url = 'https://x.com/home'
 
 {harness_navigate_snippet('target_url')}
+current = page_info()
 if current.get('dialog') or 'x.com/home' not in (current.get('url') or ''):
     js('window.onbeforeunload = null')
     goto_url('https://x.com/home')

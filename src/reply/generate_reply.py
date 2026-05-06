@@ -41,7 +41,7 @@ Text Rules:
 
 
 def build_messages(post: dict, system_prompt: str) -> list[dict]:
-    learning_ctx = _build_learning_context()
+    learning_ctx = build_learning_context()
     persona_ctx = build_persona_context()
 
     system_parts = [system_prompt]

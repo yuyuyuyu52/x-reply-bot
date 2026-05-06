@@ -1,6 +1,4 @@
 {
-  "events": [],
-  "recent_posts": [],
   "static": {
     "background": "在公司打工，同时在折腾副业、自媒体和 Web3。vibe coder，主力工具是 Claude / Codex / Gemini，写代码靠 AI 推着走，想法靠自己。想挣点属于自己的钱，还没挣到，但一直在试。",
     "content_pillars": [
@@ -16,5 +14,14 @@
       "经营 X 账号，在试自媒体这条路"
     ],
     "recurring_people": []
-  }
+  },
+  "events": [],
+  "recent_posts": [
+    {
+      "timestamp": "2026-05-06 21:25:42 CST",
+      "date": "2026-05-06",
+      "text": "Claude 3.5 Sonnet 写代码那种流畅感再也回不来了。新版响应快了一点，但复杂上下文理解明显退化，有些之前能 hold 住的工程问题现在直接崩掉。",
+      "topic_type": "casual"
+    }
+  ]
 }

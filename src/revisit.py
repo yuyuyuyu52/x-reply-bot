@@ -36,7 +36,7 @@ from src.common import (
     write_json,
 )
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 REVISIT_DELAY_HOURS = 24
 MAX_ATTEMPTS = 3
 DEFAULT_MAX_PER_RUN = 20

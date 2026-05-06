@@ -22,7 +22,7 @@ import re
 from contextlib import contextmanager
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = ROOT / "state"
 SELECTED_PATH = STATE_DIR / "selected_post.json"
 REPLIED_PATH = STATE_DIR / "replied_posts.json"

@@ -7,26 +7,26 @@ omitted unless they alter how the bot is configured or operated.
 
 ## [Unreleased]
 
+### Fixed
+- 修复 `run_once.py` 缺少 `import fcntl` 导致 `NameError`
+- 修复 `src/common.py` 的 `ROOT` 指向 `src/` 而非 repo root，导致 `.env` 和 `state/` 路径错位
+- 修复 `run_once.py`、`post_once.py`、`bot_daemon.py` 的 subprocess/Popen 调用缺少 `PYTHONPATH`，导致子脚本 `from src.xxx` 报 `ModuleNotFoundError`
+- 修复 `src/reply/generate_reply.py` 中 `_build_learning_context` 应为 `build_learning_context`
+- 修复 `src/post/post_generate.py` 中 `get_generation_context` 应为 `persona_context_dict`，补缺失的 `recent_learning_references` 导入
+- 修复 `src/observe_feed.py` 缺失 `infer_own_handle`、`parse_metrics`、`engagement_score` 导入
+- 修复 `src/revisit.py` 的 `ROOT` 指向 `src/` 而非 repo root
+
+## [2026-05-01]
+
 ### Added
 - 支持引用推文和转发：`generate_reply.py` 更新了 Prompt 使其能选择 reply、quote 或 repost，`send_reply.py` 和 `run_once.py` 同步支持执行。
 - 自动关注高质量用户：`observe_feed.py` 遇到 quality_label 为 high_quality 的帖子时，会自动用 harness 点击 Follow 作者（每天最多关注 5 人）。
 - 回复反馈：`revisit.py` 现在也扫 `state/history/`，对发出 ≥24h 的回复打开原帖楼、滚动定位自己那条 nested reply（`reply_text` 完全匹配 + 自家 handle 兜底确认）、抓 aria-label 写入 `engagement_24h`；找不到时累计 attempts，3 次后标记 `failed`
 - `/revisit_status` 与每晚 24h 反馈摘要现在分别按 `post` / `reply` 计数与展示
-
-### Fixed
-- `needs_revisit(reply)` 之前用 `int(rc or 1)` 判断成功码，导致 `send_returncode == 0` 反而被排除；改为显式 `rc is None or int(rc) != 0`
-
-## [2026-05-05]
-### Added
-- 反馈回访任务 `revisit.py`：每晚 23:00–07:00 每 30 分钟扫一次 `state/post_history/`，对发出 ≥24h 的主动帖回访其 views/likes/replies/reposts/bookmarks 并写入 `engagement_24h`，失败 3 次后标记 `failed` 不再尝试 (f3c4482, 74577d0)
-- Telegram 命令 `/revisit_once` `/revisit_status`，并加入 `sync_tg_commands.py` 命令清单 (74577d0)
-- 当晚 24h 反馈摘要：每个夜间窗口（按窗口起始日期去重）在第一批回访完成后统一推送一次至 Telegram (74577d0)
-- `scripts/_common.sh`：让所有 shell 脚本可在任意部署目录运行；新增 `X_REPLY_PYTHON` / `X_REPLY_TMUX_SESSION` / `X_REPLY_TZ` 环境变量覆盖 (e270358)
+- 反馈回访任务 `revisit.py`：每晚 23:00–07:00 每 30 分钟扫一次 `state/post_history/`，对发出 ≥24h 的主动帖回访其 views/likes/replies/reposts/bookmarks 并写入 `engagement_24h`
+- Telegram 命令 `/revisit_once` `/revisit_status`，并加入 `sync_tg_commands.py` 命令清单
+- `scripts/_common.sh`：让所有 shell 脚本可在任意部署目录运行；新增 `X_REPLY_PYTHON` / `X_REPLY_TMUX_SESSION` / `X_REPLY_TZ` 环境变量覆盖
 
 ### Changed
-- `start_bot.sh` / `stop_bot.sh` / `status_bot.sh` / `bot_loop.sh` / `scheduled_run.sh` / `install_cron.sh` / `uninstall_cron.sh` 不再硬编码 `/home/will/x-reply-bot` 和 harness 路径，改为从脚本自身位置反推 (e270358)
-- AGENTS.md 升级为 "Four job types"；README 增补 `/event` `/revisit_once` `/revisit_status` 命令说明 (74577d0, c4a7e9e)
-
-### Fixed
-- Chrome 标签累积 + beforeunload 弹窗：`prepare_post.py` / `send_reply.py` / `post_send.py` / `observe_feed.py` 现在统一复用同一个 x.com 标签，每次 `goto_url` 之前先 `js('window.onbeforeunload = null')` 防止"离开页面?"对话框打断 (c939538)
-- `state/replied_posts.json` 无界增长：`send_reply.py` 写入时保留最近 2000 条 (e2889f0)
+- `start_bot.sh` / `stop_bot.sh` / `status_bot.sh` / `bot_loop.sh` / `scheduled_run.sh` / `install_cron.sh` / `uninstall_cron.sh` 不再硬编码 `/home/will/x-reply-bot` 和 harness 路径，改为从脚本自身位置反推
+- AGENTS.md 升级为 "Four job types"

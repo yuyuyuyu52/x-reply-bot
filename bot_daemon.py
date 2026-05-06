@@ -675,6 +675,7 @@ def poll_updates(
                 next_run_at,
                 next_post_run_at,
                 next_learn_at,
+                next_revisit_at,
                 run_trigger,
                 active_label,
             )

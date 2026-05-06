@@ -167,8 +167,13 @@ for step in range(6):
 print(json.dumps(list(seen.values()), ensure_ascii=False, indent=2))
 """
     output = run_harness(textwrap.dedent(code), timeout=150)
-    data = json.loads(output)
-    return data if isinstance(data, list) else []
+    try:
+        data = json.loads(output)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, ValueError) as exc:
+        print(f"observe_feed JSONDecodeError: {exc}")
+        print(f"raw output ({len(output)} chars): {output[:500]}")
+        return []
 
 
 def clean_candidates(posts: list[dict]) -> list[dict]:

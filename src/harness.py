@@ -102,8 +102,14 @@ def run_harness(code: str, timeout: int = 75) -> str:
             restart_harness_daemon(env.get("BU_NAME", "x-reply-bot"))
             time.sleep(2 + attempt)
             continue
-        if proc.returncode == 0:
+        if proc.returncode == 0 and proc.stdout.strip():
             return proc.stdout
+        if proc.returncode == 0:
+            err = f"browser-harness returned empty stdout (exit 0)"
+            errors.append(err)
+            restart_harness_daemon(env.get("BU_NAME", "x-reply-bot"))
+            time.sleep(2 + attempt)
+            continue
 
         err = f"browser-harness exited {proc.returncode}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
         errors.append(err)

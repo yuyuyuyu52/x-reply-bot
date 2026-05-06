@@ -87,7 +87,6 @@ def run_harness(code: str, timeout: int = 75) -> str:
         try:
             proc = subprocess.run(
                 [browser_harness_bin(), "-c", code],
-                input="",
                 text=True,
                 capture_output=True,
                 env=env,

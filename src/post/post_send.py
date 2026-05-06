@@ -156,7 +156,7 @@ else:
   }}
   return '';
 }})()
-""" % {json.dumps(match_snippet, ensure_ascii=False)}) or ''
+""" % json.dumps(match_snippet, ensure_ascii=False)) or ''
         # Don't echo body (full timeline scrape, ~9 KB, contains other users'
         # posts/ads — privacy + bloat). Persist the boolean we actually use,
         # plus a tiny snippet bounded to the success-marker line for debugging.

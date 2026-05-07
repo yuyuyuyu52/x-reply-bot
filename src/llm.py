@@ -146,7 +146,6 @@ def chat_completion(
     logger.info("chat_completion start provider=%s model=%s messages=%d prompt_chars=%d temp=%.2f max_tokens=%s",
                  provider_mode(), m, len(messages), prompt_chars, temperature, max_tokens)
 
-    t0 = time.time()
     if provider_mode() == "anthropic":
         data = anthropic_completion(messages, temperature=temperature, max_tokens=max_tokens)
     else:

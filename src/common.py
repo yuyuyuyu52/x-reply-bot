@@ -38,8 +38,15 @@ TELEGRAM_STATE_PATH = STATE_DIR / "telegram_state.json"
 DAILY_REPORT_STATE_PATH = STATE_DIR / "daily_report_state.json"
 LATEST_REVISIT_RUN_PATH = STATE_DIR / "latest_revisit_run.json"
 REVISIT_REPORT_STATE_PATH = STATE_DIR / "revisit_report_state.json"
+HOTSPOT_STORE_PATH = STATE_DIR / "hotspot.db"
+HOTSPOT_HISTORY_DIR = STATE_DIR / "hotspot_history"
+LATEST_HOTSPOT_RUN_PATH = STATE_DIR / "latest_hotspot_run.json"
 ENV_PATH = ROOT / ".env"
-VALID_POST_TOPIC_TYPES = {"news_react", "story", "argument", "casual"}
+VALID_POST_TOPIC_TYPES = {"news_react", "story", "argument", "casual", "thread", "article"}
+
+THREAD_MIN_SEGMENTS = 3
+THREAD_MAX_SEGMENTS = 5
+THREAD_MAX_SEGMENT_CHARS = 280
 
 BLOCK_PATTERNS = [
     "promoted",
@@ -123,6 +130,25 @@ def api_key() -> str:
     return env_first("X_REPLY_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
 
 
+def image_api_key() -> str:
+    return os.environ.get("X_REPLY_IMAGE_API_KEY", "").strip()
+
+
+def image_api_url() -> str:
+    return os.environ.get("X_REPLY_IMAGE_API_URL", "").strip()
+
+
+def image_model() -> str:
+    return os.environ.get("X_REPLY_IMAGE_MODEL", "gpt-image-2").strip()
+
+
+def image_cost_cny() -> float:
+    try:
+        return float(os.environ.get("X_REPLY_IMAGE_COST_CNY", "0.070"))
+    except ValueError:
+        return 0.070
+
+
 def append_log(entry: dict) -> None:
     logs = load_json(RUN_LOG_PATH, [])
     logs.append(entry)
@@ -161,6 +187,33 @@ def normalize_status_url(url: str) -> str:
     """Extract canonical https://x.com/<user>/status/<id> from a URL."""
     match = re.search(r"https://x\.com/[^/]+/status/\d+", url or "")
     return match.group(0) if match else ""
+
+
+def repost_enabled() -> bool:
+    return os.environ.get("X_REPLY_ENABLE_REPOST", "1") not in ("0", "false", "no", "False")
+
+
+def quote_enabled() -> bool:
+    return os.environ.get("X_REPLY_ENABLE_QUOTE", "1") not in ("0", "false", "no", "False")
+
+
+def repost_daily_limit() -> int:
+    try:
+        return max(0, int(os.environ.get("X_REPOST_DAILY_LIMIT", "1")))
+    except ValueError:
+        return 1
+
+
+def count_daily_reposts(date_str: str) -> int:
+    total = 0
+    for path in sorted(HISTORY_DIR.glob("*.json")):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if item.get("date_beijing") == date_str and item.get("action") == "repost":
+            total += 1
+    return total
 
 
 @contextmanager

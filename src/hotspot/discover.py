@@ -71,7 +71,7 @@ def fetch_hn_top_stories(limit: int = HN_MAX_FETCH) -> list[dict]:
 
 def filter_hotspot(story: dict) -> dict:
     """Use LLM to filter and score a single story."""
-    result, payload = chat_json_result(
+    response = chat_json_result(
         [
             {"role": "system", "content": HOTSPOT_FILTER_PROMPT},
             {
@@ -89,14 +89,15 @@ def filter_hotspot(story: dict) -> dict:
         temperature=0.3,
         max_tokens=300,
     )
+    payload = response["payload"]
     return {
         "relevant": bool(payload.get("relevant")),
         "score": int(payload.get("score") or 0),
         "reason": str(payload.get("reason") or "").strip(),
         "angle": str(payload.get("angle") or "").strip(),
         "cn_summary": str(payload.get("cn_summary") or "").strip(),
-        "cost": result.get("cost", {}),
-        "usage": result.get("usage", {}),
+        "cost": response.get("cost", {}),
+        "usage": response.get("usage", {}),
     }
 
 

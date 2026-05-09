@@ -126,7 +126,7 @@ def main() -> int:
                 "source": "hotspot",
                 "status": "pending",
                 "subject": item["title"],
-                "event_or_context": f"[{item['source']}] {item['relevance_reason']} | 原链接: {item['url']}",
+                "event_or_context": f"今天[{item['source']}] {item['relevance_reason']} | 原链接: {item['url']}",
                 "stance": item["angle"],
                 "evidence_hint": f"热度: {item['hn_score']}↑ {item['hn_descendants']}💬 | 相关度: {item['relevance_score']}/5",
             })

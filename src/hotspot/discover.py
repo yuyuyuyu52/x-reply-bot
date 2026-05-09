@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import textwrap
 import time
 import urllib.parse
 import urllib.request
@@ -38,19 +39,29 @@ TLDR_AI_URL = "https://tldr.tech/ai"
 GH_TRENDING_URL = "https://github.com/trending?since=daily"
 
 # Company blogs / RSS
-COMPANY_SOURCES = {
+# Company X accounts for direct tweet scraping via browser-harness
+COMPANY_X_ACCOUNTS = {
     "openai": {
-        "blog_url": "",
+        "handle": "OpenAI",
+        "profile_url": "https://x.com/OpenAI",
         "label": "OpenAI 动态",
     },
     "anthropic": {
-        "blog_url": "",
+        "handle": "AnthropicAI",
+        "profile_url": "https://x.com/AnthropicAI",
         "label": "Anthropic 动态",
     },
     "google": {
-        "blog_url": "https://blog.google/technology/ai/rss/",
+        "handle": "GoogleDeepMind",
+        "profile_url": "https://x.com/GoogleDeepMind",
         "label": "Google AI 动态",
     },
+}
+
+COMPANY_BLOG_URLS: dict[str, str] = {
+    "openai": "https://openai.com/index/",
+    "anthropic": "https://www.anthropic.com/research",
+    "google": "https://blog.google/technology/ai/rss/",
 }
 HN_ALGOLIA_URL = "https://hn.algolia.com/api/v1/search_by_date"
 
@@ -269,11 +280,8 @@ def fetch_tldr_ai(limit: int = 15) -> list[dict]:
     return posts
 
 
-def _fetch_company_via_hn_search(company: str, limit: int = 10) -> list[dict]:
+def _fetch_company_via_hn_search(company: str, label: str, limit: int = 10) -> list[dict]:
     """Fallback: fetch company news via HN Algolia search."""
-    cfg = COMPANY_SOURCES.get(company)
-    if not cfg:
-        return []
     params = urllib.parse.urlencode({
         "query": company,
         "tags": "story",
@@ -287,10 +295,10 @@ def _fetch_company_via_hn_search(company: str, limit: int = 10) -> list[dict]:
         object_id = hit.get("objectID", "")
         if not title:
             continue
-        title = f"[{cfg['label']}] {title}"
+        title = f"[{label}] {title}"
         hn_url = f"https://news.ycombinator.com/item?id={object_id}"
         posts.append({
-            "id": f"algolia-{object_id}",
+            "id": f"hn-{object_id}",
             "title": title,
             "url": hit.get("url") or hn_url,
             "score": hit.get("points", 0),
@@ -319,10 +327,8 @@ def _fetch_company_blog_rss(url: str, label: str, limit: int = 10) -> list[dict]
             continue
         title = re.sub(r"<[^>]+>", "", title_m.group(1)).strip()
         link = (link_m.group(1) if link_m else "").strip()
-        if not title:
+        if not title or not link:
             continue
-        if not link:
-            link = url
         posts.append({
             "id": link.split("/")[-2] or link.split("/")[-1] or title[:20],
             "title": f"[{label}] {title}",
@@ -334,57 +340,78 @@ def _fetch_company_blog_rss(url: str, label: str, limit: int = 10) -> list[dict]
     return posts
 
 
-def fetch_company_news(company: str, limit: int = 10) -> list[dict]:
-    """Fetch company news: try official blog/RSS first, fall back to HN search."""
-    cfg = COMPANY_SOURCES.get(company)
+def _fetch_company_x_profile(company: str, limit: int = 10) -> list[dict]:
+    """Scrape recent tweets from an X company profile via browser-harness."""
+    from src.common import run_harness
+    cfg = COMPANY_X_ACCOUNTS.get(company)
     if not cfg:
         return []
-    blog_url = cfg.get("blog_url", "")
-    label = cfg.get("label", company)
+    profile_url = cfg["profile_url"]
+    label = cfg["label"]
 
+    js_code = (
+        "JSON.stringify("
+        "Array.from(document.querySelectorAll('[data-testid=\"tweet\"]'))"
+        f".slice(0, {limit})"
+        ".map(tweet => {"
+        "const textEl = tweet.querySelector('[data-testid=\"tweetText\"]');"
+        "const timeEl = tweet.querySelector('time');"
+        "const linkEl = tweet.querySelectorAll('a[href*=\"/status/\"]');"
+        "const statusUrl = linkEl.length > 0 ? (linkEl[linkEl.length - 1] || {}).href || '' : '';"
+        "const statusId = statusUrl ? statusUrl.split('/status/')[1].split('/')[0] : '';"
+        "return {text: textEl ? textEl.innerText : '', time: timeEl ? timeEl.getAttribute('datetime') : '', id: statusId};"
+        "})"
+        ".filter(t => t.text && t.id)"
+        ")"
+    )
+    code = (
+        f'goto("{profile_url}")\n'
+        f'wait_for_load(5)\n'
+        f'wait(2)\n'
+        f'tweets_json = js({json.dumps(js_code)})\n'
+        f'print(tweets_json)\n'
+    )
+    try:
+        stdout = run_harness(code, timeout=60)
+        tweets = json.loads(stdout.strip())
+    except Exception as exc:
+        logger.warning("company %s: X scrape failed: %s", label, exc)
+        return []
+
+    posts = []
+    for tweet in tweets:
+        text = tweet.get("text", "")
+        tid = tweet.get("id", "")
+        posts.append({
+            "id": f"x-{tid}",
+            "title": f"[{label}] {text[:120]}",
+            "url": f"https://x.com/{cfg['handle']}/status/{tid}",
+            "score": 0,
+            "descendants": 0,
+        })
+    logger.info("company %s: X got %d tweets", label, len(posts))
+    return posts
+
+
+def fetch_company_news(company: str, limit: int = 10) -> list[dict]:
+    """Fetch company news: X profile first > blog RSS > HN search fallback."""
+    label = COMPANY_X_ACCOUNTS.get(company, {}).get("label", company)
+
+    # 1. Try X profile via browser-harness
+    posts = _fetch_company_x_profile(company, limit)
+    if posts:
+        return posts
+
+    # 2. Try blog RSS (Google has one)
+    blog_url = COMPANY_BLOG_URLS.get(company, "")
     if blog_url and ("rss" in blog_url.lower() or "feed" in blog_url.lower()):
         posts = _fetch_company_blog_rss(blog_url, label, limit)
         if posts:
             return posts
 
-    # Try scraping blog HTML if not RSS
-    if blog_url:
-        try:
-            body = _http_get(blog_url, timeout=15, ua=UA_GENERIC).decode()
-        except Exception as exc:
-            logger.warning("company %s: blog blocked (Cloudflare?), using HN search: %s", label, exc)
-            return _fetch_company_via_hn_search(company, limit)
-
-        # Extract article links from HTML
-        links = re.findall(
-            r'<a[^>]*href="([^"]*)"[^>]*>\s*([^<]{10,120}?)\s*</a>',
-            body,
-        )
-        posts = []
-        seen = set()
-        for href, raw_title in links[:limit * 3]:
-            title = re.sub(r"<[^>]+>", "", raw_title).strip()
-            if len(title) < 15 or title in seen:
-                continue
-            seen.add(title)
-            full_url = href if href.startswith("http") else f"{blog_url.rstrip('/')}{href}"
-            posts.append({
-                "id": full_url.split("/")[-2] or title[:20],
-                "title": f"[{label}] {title}",
-                "url": full_url,
-                "score": 0,
-                "descendants": 0,
-            })
-            if len(posts) >= limit:
-                break
-        if posts:
-            logger.info("company %s: blog HTML got %d posts", label, len(posts))
-            return posts
-
-        # Fall back to HN search if blog scraping yielded nothing
-        logger.info("company %s: blog HTML empty, falling back to HN search", label)
-
-    return _fetch_company_via_hn_search(company, limit)
+    # 3. Fall back to HN search
+    logger.info("company %s: X and blog unavailable, using HN search", label)
+    return _fetch_company_via_hn_search(company, label, limit)
 
 
 # ---------------------------------------------------------------------------

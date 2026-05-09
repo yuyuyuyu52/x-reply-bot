@@ -920,9 +920,11 @@ def main() -> int:
                 and (next_run_at - now).total_seconds() > hotspot_guard_seconds()
                 and (next_post_run_at - now).total_seconds() > hotspot_guard_seconds()
             ):
-                run_proc = start_job("discover_hotspots.py", "schedule")
-                run_trigger = "schedule"
-                active_label = "discover_hotspots.py"
+                today = now.strftime("%Y-%m-%d")
+                if count_hotspot_posts_today(today) < hotspot_daily_limit():
+                    run_proc = start_job("discover_hotspots.py", "schedule")
+                    run_trigger = "schedule"
+                    active_label = "discover_hotspots.py"
                 next_hotspot_at = next_hotspot_after(now)
             elif (
                 run_proc is None

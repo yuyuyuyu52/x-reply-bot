@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 
 from src.common import chat_json_result
 from src.hotspot.store import is_seen, insert_hotspot
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 HN_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
@@ -39,12 +43,22 @@ HOTSPOT_FILTER_PROMPT = """\
 
 def fetch_hn_top_stories(limit: int = HN_MAX_FETCH) -> list[dict]:
     """Fetch top stories from Hacker News API."""
-    req = urllib.request.Request(
-        HN_TOP_STORIES_URL,
-        headers={"User-Agent": "x-reply-bot/1.0"},
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        ids = json.loads(resp.read().decode())
+    logger.info("hn_fetch: requesting top stories list")
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                HN_TOP_STORIES_URL,
+                headers={"User-Agent": "x-reply-bot/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                ids = json.loads(resp.read().decode())
+            break
+        except Exception:
+            if attempt < 2:
+                logger.warning("hn_fetch: top stories attempt %d failed, retrying", attempt + 1)
+                time.sleep(1)
+            else:
+                raise
 
     stories: list[dict] = []
     for sid in ids[:limit]:
@@ -66,6 +80,7 @@ def fetch_hn_top_stories(limit: int = HN_MAX_FETCH) -> list[dict]:
             "score": item.get("score", 0),
             "descendants": item.get("descendants", 0),
         })
+    logger.info("hn_fetch: got %d stories from top list", len(stories))
     return stories
 
 
@@ -117,9 +132,12 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
     for source in sources:
         if source == "hn":
             try:
+                logger.info("discover: fetching HN top stories")
                 stories = fetch_hn_top_stories()
                 all_stories.extend({"source": "hn", **s} for s in stories)
+                logger.info("discover: HN fetch complete, %d total stories", len(all_stories))
             except Exception as exc:
+                logger.error("discover: HN fetch failed: %s", exc)
                 return {
                     "ok": False,
                     "error": f"hn_fetch_failed: {exc}",
@@ -127,6 +145,7 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
                     "added": 0,
                     "skipped_seen": 0,
                     "filtered_out": 0,
+                    "errors": 0,
                     "items": [],
                     "total_cost_cny": 0.0,
                 }
@@ -136,6 +155,7 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
     added = 0
     skipped_seen = 0
     filtered_out = 0
+    errors = 0
     items: list[dict] = []
 
     for story in all_stories:
@@ -146,9 +166,22 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
             continue
 
         discovered += 1
-        result = filter_hotspot(story)
+        try:
+            result = filter_hotspot(story)
+        except Exception as exc:
+            errors += 1
+            logger.warning(
+                "discover: LLM filter failed for hn:%s title=%.40s: %s",
+                sid, story.get("title", ""), exc,
+            )
+            continue
+
         total_cost += float(result["cost"].get("total_cost") or 0.0)
         relevant = result["relevant"] and result["score"] >= 3
+        logger.info(
+            "discover: hn:%s score=%d relevant=%s reason=%s",
+            sid, result["score"], relevant, result["reason"],
+        )
 
         insert_hotspot(
             source=source,
@@ -180,12 +213,18 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
         else:
             filtered_out += 1
 
+    logger.info(
+        "discover: batch complete discovered=%d added=%d skipped_seen=%d filtered_out=%d errors=%d cost_cny=%.6f",
+        discovered, added, skipped_seen, filtered_out, errors, total_cost,
+    )
+
     return {
         "ok": True,
         "discovered": discovered,
         "added": added,
         "skipped_seen": skipped_seen,
         "filtered_out": filtered_out,
+        "errors": errors,
         "items": items,
         "total_cost_cny": round(total_cost, 8),
     }

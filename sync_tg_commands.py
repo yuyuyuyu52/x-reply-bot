@@ -21,6 +21,10 @@ COMMANDS = [
     {"command": "event", "description": "记录一件近期发生的事，供发帖时参考"},
     {"command": "revisit_once", "description": "立即跑一轮反馈回访"},
     {"command": "revisit_status", "description": "查看反馈回访状态"},
+    {"command": "review", "description": "查看近期待评价的回复和帖子"},
+    {"command": "rate", "description": "给回复或帖子打分 1-5"},
+    {"command": "hotspot_discover", "description": "立即发现热点并入队"},
+    {"command": "hotspot_status", "description": "查看热点发现状态"},
 ]
 
 SCOPES = [

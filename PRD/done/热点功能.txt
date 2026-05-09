@@ -13,17 +13,33 @@ bot 自动跟随热点，无需人工审核每一步。
 - 【中等优先级】创业/startup、产品/增长、开发者工具、web3/加密货币、金融/金融科技、半导体/光模块/硬件、自媒体创作
 - 【低优先级】AI 其他方面（模型发布、学术论文、融资新闻）——仅供评分参考，不优先选取
 
-### 热度来源
+### 热度来源（10 个，已全部实现）
 
-- Hacker News（news.ycombinator.com）—— AI/技术圈风向标，高票帖代表当前讨论热点
-- X Trending / For You 时间线（后续接入）——最直接的热度信号
-- 其他来源（后续扩展）：微信公众号热文、知乎热榜、HuggingFace Papers
+**社区源：**
+- Hacker News —— 免费 JSON API，top 30
+- Lobsters —— 免费 JSON API，hottest 25
+- Simon Willison's blog —— Atom feed，最新 10 篇
+- GitHub Trending —— HTML 抓取，每日热门 repo
+- HuggingFace Daily Papers —— JSON API，每日热门 AI 论文
+- TLDR AI —— HTML 抓取，日更 AI 速报
+- Reddit × 5 子版 —— 需配置 OAuth（待完善）
+
+**公司动态源（每个公司独立）：**
+- OpenAI —— 优先 X 账号 @OpenAI（browser-harness），降级 HN 搜索
+- Anthropic —— 优先 X 账号 @AnthropicAI（browser-harness），降级 HN 搜索
+- Google AI —— Google Blog RSS + X 账号 @GoogleDeepMind
+
+**后续扩展：**
+- Product Hunt —— 新产品发布
+- X Trending / For You —— browser-harness 抓取
+- 微信公众号热文
 
 ### 发现机制
-- 定时从 HN API 拉取 top 30 热门
-- LLM 逐条筛选评分：是否与关注方向相关，按优先级加权打分
+- 定时从 10 个源拉取候选（预计每轮 100-150 条），去重后 LLM 逐条筛选
+- 公司动态源（OpenAI / Anthropic / Google）拉到的帖子自动提一档评分
 - 相关度 >= 3 的热点自动加入发帖队列
 - SQLite 去重：同一热点只发一次
+- 每个源独立 `fetch_*()` 函数，便于单独调试和增减源
 
 
 ## 二、跟随热点

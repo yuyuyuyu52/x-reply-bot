@@ -23,10 +23,14 @@ HOTSPOT_FILTER_PROMPT = """\
 输出严格 JSON：
 {"relevant": true, "score": 3, "reason": "...", "angle": "...", "cn_summary": "..."}
 
-关注方向：AI 与 LLM、web3/加密货币、金融科技、半导体、光模块/硬件、创业/startup、产品/增长、开发者工具、自媒体创作。
+关注方向（按优先级排序）：
+- 【最高优先级】AI + vibe coding：AI 编程工具、AI 工作流自动化、AI agent、LLM 辅助开发、cursor/windsurf/copilot 等工具生态、低代码与 AI 结合
+- 【高优先级】AI 工作流：AI 如何改变日常工作方式、AI 自动化实践、人与 AI 协作模式
+- 【中等优先级】创业/startup、产品/增长、开发者工具、web3/加密货币
+- 【低优先级】AI 其他方面（模型发布、学术论文、融资新闻）——仅供评分参考，不优先选取
 
 规则：
-- relevant: 是否与上述方向相关
+- relevant: 是否与上述方向相关，AI+vibe coding 和 AI 工作流优先判断
 - score: 1-5 热度与讨论价值评分
   - 5=高热度且有独特切入角度，非常值得发帖
   - 4=相关且有观点空间

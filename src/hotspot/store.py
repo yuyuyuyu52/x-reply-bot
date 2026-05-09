@@ -3,16 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-import os
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 
-
-def _db_path() -> Path:
-    return Path(os.environ.get(
-        "X_HOTSPOT_STORE_PATH",
-        str(Path(__file__).resolve().parent.parent.parent / "state" / "hotspot.db"),
-    ))
+from src.common import HOTSPOT_STORE_PATH
 
 
 SCHEMA = [
@@ -43,18 +37,23 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _get_conn() -> sqlite3.Connection:
-    db = _db_path()
+@contextmanager
+def _get_conn():
+    db = HOTSPOT_STORE_PATH
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def is_seen(source: str, hotspot_id: str) -> bool:
-    conn = _get_conn()
-    cur = conn.execute("SELECT 1 FROM hotspots WHERE id = ?", (f"{source}:{hotspot_id}",))
-    return cur.fetchone() is not None
+    with _get_conn() as conn:
+        cur = conn.execute("SELECT 1 FROM hotspots WHERE id = ?", (f"{source}:{hotspot_id}",))
+        return cur.fetchone() is not None
 
 
 def insert_hotspot(
@@ -69,46 +68,46 @@ def insert_hotspot(
     angle: str = "",
     cn_summary: str = "",
 ) -> None:
-    conn = _get_conn()
-    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    conn.execute(
-        """\
+    with _get_conn() as conn:
+        now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        conn.execute(
+            """\
 INSERT OR IGNORE INTO hotspots
     (id, source, title, url, hn_score, hn_descendants,
      relevance_score, relevance_reason, angle, cn_summary, discovered_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """,
-        (
-            f"{source}:{hotspot_id}",
-            source,
-            title,
-            url,
-            hn_score,
-            hn_descendants,
-            relevance_score,
-            relevance_reason,
-            angle,
-            cn_summary,
-            now,
-        ),
-    )
-    conn.commit()
+            (
+                f"{source}:{hotspot_id}",
+                source,
+                title,
+                url,
+                hn_score,
+                hn_descendants,
+                relevance_score,
+                relevance_reason,
+                angle,
+                cn_summary,
+                now,
+            ),
+        )
+        conn.commit()
 
 
 def mark_added_to_queue(source: str, hotspot_id: str) -> None:
-    conn = _get_conn()
-    conn.execute(
-        "UPDATE hotspots SET added_to_queue = 1 WHERE id = ?",
-        (f"{source}:{hotspot_id}",),
-    )
-    conn.commit()
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE hotspots SET added_to_queue = 1 WHERE id = ?",
+            (f"{source}:{hotspot_id}",),
+        )
+        conn.commit()
 
 
 def recent_hotspots(days: int = 1, limit: int = 20) -> list[dict]:
-    conn = _get_conn()
-    cutoff = (datetime.now().astimezone() - timedelta(days=days)).strftime("%Y-%m-%d")
-    rows = conn.execute(
-        """\
+    with _get_conn() as conn:
+        cutoff = (datetime.now().astimezone() - timedelta(days=days)).strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """\
 SELECT id, source, title, url, hn_score, hn_descendants,
        relevance_score, relevance_reason, angle, cn_summary,
        discovered_at, added_to_queue
@@ -117,42 +116,42 @@ WHERE discovered_at >= ?
 ORDER BY relevance_score DESC, hn_score DESC
 LIMIT ?
 """,
-        (cutoff, limit),
-    ).fetchall()
+            (cutoff, limit),
+        ).fetchall()
     return [
         {
-            "id": row[0],
-            "source": row[1],
-            "title": row[2],
-            "url": row[3],
-            "hn_score": row[4],
-            "hn_descendants": row[5],
-            "relevance_score": row[6],
-            "relevance_reason": row[7],
-            "angle": row[8],
-            "cn_summary": row[9],
-            "discovered_at": row[10],
-            "added_to_queue": row[11],
+            "id": row["id"],
+            "source": row["source"],
+            "title": row["title"],
+            "url": row["url"],
+            "hn_score": row["hn_score"],
+            "hn_descendants": row["hn_descendants"],
+            "relevance_score": row["relevance_score"],
+            "relevance_reason": row["relevance_reason"],
+            "angle": row["angle"],
+            "cn_summary": row["cn_summary"],
+            "discovered_at": row["discovered_at"],
+            "added_to_queue": row["added_to_queue"],
         }
         for row in rows
     ]
 
 
 def hotspot_stats() -> dict:
-    conn = _get_conn()
-    today = datetime.now().astimezone().strftime("%Y-%m-%d")
-    total = conn.execute("SELECT COUNT(*) FROM hotspots").fetchone()[0]
-    added = conn.execute(
-        "SELECT COUNT(*) FROM hotspots WHERE added_to_queue = 1"
-    ).fetchone()[0]
-    today_discovered = conn.execute(
-        "SELECT COUNT(*) FROM hotspots WHERE discovered_at LIKE ?",
-        (f"{today}%",),
-    ).fetchone()[0]
-    today_added = conn.execute(
-        "SELECT COUNT(*) FROM hotspots WHERE discovered_at LIKE ? AND added_to_queue = 1",
-        (f"{today}%",),
-    ).fetchone()[0]
+    with _get_conn() as conn:
+        today = datetime.now().astimezone().strftime("%Y-%m-%d")
+        total = conn.execute("SELECT COUNT(*) FROM hotspots").fetchone()[0]
+        added = conn.execute(
+            "SELECT COUNT(*) FROM hotspots WHERE added_to_queue = 1"
+        ).fetchone()[0]
+        today_discovered = conn.execute(
+            "SELECT COUNT(*) FROM hotspots WHERE discovered_at LIKE ?",
+            (f"{today}%",),
+        ).fetchone()[0]
+        today_added = conn.execute(
+            "SELECT COUNT(*) FROM hotspots WHERE discovered_at LIKE ? AND added_to_queue = 1",
+            (f"{today}%",),
+        ).fetchone()[0]
     return {
         "total_discovered": total,
         "total_added_to_queue": added,

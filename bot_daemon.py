@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ from src.common import (
     HISTORY_DIR,
     LATEST_POST_RUN_PATH,
     LATEST_REVISIT_RUN_PATH,
+    LATEST_HOTSPOT_RUN_PATH,
     LATEST_RUN_PATH,
     POST_HISTORY_DIR,
     REVISIT_REPORT_STATE_PATH,
@@ -179,17 +181,65 @@ def revisit_guard_seconds() -> int:
     return 600
 
 
+def hotspot_enabled() -> bool:
+    return os.environ.get("X_HOTSPOT_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def hotspot_interval_seconds() -> int:
+    try:
+        return max(600, int(os.environ.get("X_HOTSPOT_INTERVAL_SECONDS", "7200")))
+    except ValueError:
+        return 7200
+
+
+def hotspot_guard_seconds() -> int:
+    try:
+        return max(60, int(os.environ.get("X_HOTSPOT_GUARD_SECONDS", "600")))
+    except ValueError:
+        return 600
+
+
+def next_hotspot_after(now: datetime) -> datetime:
+    return now + timedelta(seconds=hotspot_interval_seconds())
+
+
+def count_hotspot_posts_today(date_str: str) -> int:
+    total = 0
+    for path in sorted(POST_HISTORY_DIR.glob("*.json")):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if item.get("date_beijing") == date_str and item.get("topic_source") == "hotspot":
+            total += 1
+    return total
+
+
+def hotspot_daily_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("X_HOTSPOT_DAILY_LIMIT", "3")))
+    except ValueError:
+        return 3
+
+
 def latest_summary() -> str:
     latest = load_json(LATEST_RUN_PATH, {})
     if not latest:
         return "ℹ️ 最近还没有成功记录。"
+    action = latest.get("action", "reply")
+    action_label = {
+        "reply": "💬 回复",
+        "quote": "🔁 引用",
+        "repost": "🔄 转发",
+    }.get(action, "💬 回复")
     lines = [
         format_kv("🕒", "最近时间", latest.get("time_beijing", "")),
         format_kv("⚙️", "最近触发", latest.get("trigger", "")),
+        format_kv("🎬", "操作类型", action_label),
         format_kv("🔗", "帖子", latest.get("post_url", "")),
         format_kv("🎯", "选中理由", latest.get("selection_reason", "")),
-        format_kv("💭", "回复", latest.get("reply_text", "")),
-        format_kv("🧠", "回复理由", latest.get("reply_reason", "")),
+        format_kv("💭", "内容", latest.get("reply_text", "")),
+        format_kv("🧠", "理由", latest.get("reply_reason", "")),
         format_kv("💰", "本次 Cost", f"{float(latest.get('total_cost_cny') or 0.0):.6f} 元"),
     ]
     return "\n".join(lines)
@@ -201,6 +251,7 @@ def status_text(
     next_post_run_at: datetime,
     next_learn_at: datetime,
     next_revisit_at: datetime,
+    next_hotspot_at: datetime,
     active_label: str,
 ) -> str:
     now = datetime.now().astimezone()
@@ -215,6 +266,8 @@ def status_text(
     if learning_enabled():
         lines.append(format_kv("👀", "下次观察学习", next_learn_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
     lines.append(format_kv("📈", "下次反馈回访", next_revisit_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
+    if hotspot_enabled():
+        lines.append(format_kv("🔥", "下次热点发现", next_hotspot_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
     lines.append("")
     lines.append(latest_summary())
     return "\n".join(lines)
@@ -375,6 +428,29 @@ def revisit_summary(next_revisit_at: datetime) -> str:
     return "\n".join(lines)
 
 
+def hotspot_summary(next_hotspot_at: datetime) -> str:
+    from src.hotspot.store import hotspot_stats
+    stats = hotspot_stats()
+    latest = load_json(LATEST_HOTSPOT_RUN_PATH, {})
+    today = datetime.now().astimezone().strftime("%Y-%m-%d")
+    lines = format_header("🔥 热点发现状态")
+    lines.extend([
+        format_kv("📊", "今日发现", stats["today_discovered"]),
+        format_kv("✅", "今日入队", stats["today_added_to_queue"]),
+        format_kv("📚", "历史总计", stats["total_discovered"]),
+        format_kv("📅", "今日热点发帖", f"{count_hotspot_posts_today(today)}/{hotspot_daily_limit()}"),
+        format_kv("🕒", "下次发现", next_hotspot_at.strftime('%Y-%m-%d %H:%M:%S %Z')),
+    ])
+    if latest:
+        lines.extend([
+            "",
+            format_kv("🕒", "最近时间", latest.get("time_beijing", "")),
+            format_kv("⚙️", "最近触发", latest.get("trigger", "")),
+            format_kv("📊", "最近发现", f"{latest.get('discovered', 0)} 条 (✅{latest.get('added', 0)})"),
+        ])
+    return "\n".join(lines)
+
+
 def maybe_send_revisit_report(now: datetime, run_proc: subprocess.Popen[str] | None) -> None:
     """Once per night, after revisits have run, push a 24h engagement digest."""
     if not telegram_enabled() or (run_proc and run_proc.poll() is None):
@@ -467,13 +543,15 @@ def finish_run(run_proc: subprocess.Popen[str], trigger: str, label: str) -> Non
     code = run_proc.returncode
     logger.info(f"{label} end trigger={trigger} code={code}")
     if code != 0 and telegram_enabled():
+        action_match = re.search(r'GENERATED_ACTION:\s*(\w+)', output or "")
+        action_info = f" ({action_match.group(1)})" if action_match else ""
         try:
             telegram_notify(
                 "\n".join(
                     [
                         "⚠️ 任务失败",
                         "",
-                        format_kv("🧩", "任务", label),
+                        format_kv("🧩", "任务", f"{label}{action_info}"),
                         format_kv("⚙️", "触发", trigger),
                         format_kv("🔢", "exit_code", code),
                         "",
@@ -507,6 +585,9 @@ def aggregate_daily_costs(date_str: str) -> dict:
         "all_cost_cny": round(sum(float(item.get("total_cost_cny") or 0.0) for item in records), 8),
         "schedule_cost_cny": round(sum(float(item.get("total_cost_cny") or 0.0) for item in schedule_records), 8),
         "manual_cost_cny": round(sum(float(item.get("total_cost_cny") or 0.0) for item in manual_records), 8),
+        "reply_count": sum(1 for item in records if item.get("action") == "reply"),
+        "quote_count": sum(1 for item in records if item.get("action") == "quote"),
+        "repost_count": sum(1 for item in records if item.get("action") == "repost"),
     }
 
 
@@ -520,19 +601,25 @@ def maybe_send_daily_cost_report(now: datetime, run_proc: subprocess.Popen[str] 
         return
 
     summary = aggregate_daily_costs(today)
-    telegram_notify(
-        "\n".join(
-            [
-                "💰 每日 Cost 汇总",
-                "",
-                format_kv("📅", "日期", summary["date_beijing"]),
-                format_kv("💬", "定时运行次数", summary["schedule_runs"]),
-                format_kv("💰", "定时总 Cost", f"{summary['schedule_cost_cny']:.6f} 元"),
-                format_kv("📊", "全部运行次数", summary["all_runs"]),
-                format_kv("🧾", "全部总 Cost", f"{summary['all_cost_cny']:.6f} 元"),
-            ]
-        )
-    )
+    lines = [
+        "💰 每日 Cost 汇总",
+        "",
+        format_kv("📅", "日期", summary["date_beijing"]),
+        format_kv("💬", "定时运行次数", summary["schedule_runs"]),
+        format_kv("💰", "定时总 Cost", f"{summary['schedule_cost_cny']:.6f} 元"),
+        format_kv("📊", "全部运行次数", summary["all_runs"]),
+        format_kv("🧾", "全部总 Cost", f"{summary['all_cost_cny']:.6f} 元"),
+    ]
+    action_parts = []
+    if summary["reply_count"]:
+        action_parts.append(f"💬 回复 x{summary['reply_count']}")
+    if summary["quote_count"]:
+        action_parts.append(f"🔁 引用 x{summary['quote_count']}")
+    if summary["repost_count"]:
+        action_parts.append(f"🔄 转发 x{summary['repost_count']}")
+    if action_parts:
+        lines.append(format_kv("🎬", "操作分布", "  ".join(action_parts)))
+    telegram_notify("\n".join(lines))
     write_json(DAILY_REPORT_STATE_PATH, {"last_reported_date": today})
 
 
@@ -543,35 +630,36 @@ def handle_command(
     next_post_run_at: datetime,
     next_learn_at: datetime,
     next_revisit_at: datetime,
+    next_hotspot_at: datetime,
     run_trigger: str,
     active_label: str,
-) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, datetime, str, str]:
+) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, datetime, datetime, str, str]:
     stripped = (text or "").strip()
     if not stripped:
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
     command = stripped.split()[0].lower()
     if command.startswith("/run"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         _safe_notify("💬 回复\n\n✅ 已收到 /run，开始执行。")
-        return start_job("run_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "run_once.py"
+        return start_job("run_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "run_once.py"
 
     if command.startswith("/status"):
-        _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, active_label))
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, active_label))
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/post_once"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         _safe_notify("📝 主动发帖\n\n✅ 已收到 /post_once，开始执行。")
-        return start_job("post_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "post_once.py"
+        return start_job("post_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "post_once.py"
 
     if command.startswith("/post_dry_run"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         _safe_notify("📝 主动发帖\n\n🧪 已收到 /post_dry_run，开始生成候选但不会发送。")
         return (
             subprocess.Popen(
@@ -586,50 +674,109 @@ def handle_command(
             next_post_run_at,
             next_learn_at,
             next_revisit_at,
+            next_hotspot_at,
             "telegram",
             "post_once.py --dry-run",
         )
 
     if command.startswith("/post_status"):
         _safe_notify(post_summary(next_post_run_at))
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/learn_status"):
         _safe_notify(learning_summary(next_learn_at))
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/learn_once"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         _safe_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
-        return start_job("src/observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "src/observe_feed.py"
+        return start_job("src/observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/observe_feed.py"
 
     if command.startswith("/revisit_status"):
         _safe_notify(revisit_summary(next_revisit_at))
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/revisit_once"):
         if run_proc and run_proc.poll() is None:
             _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         _safe_notify("📈 反馈回访\n\n✅ 已收到 /revisit_once，开始执行。")
-        return start_job("src/revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, "telegram", "src/revisit.py"
+        return start_job("src/revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/revisit.py"
+
+    if command.startswith("/hotspot_discover"):
+        if run_proc and run_proc.poll() is None:
+            _safe_notify("⏳ 当前已有任务在执行。")
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+        _safe_notify("🔥 热点发现\n\n✅ 已收到 /hotspot_discover，开始执行。")
+        return start_job("discover_hotspots.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "discover_hotspots.py"
+
+    if command.startswith("/hotspot_status"):
+        _safe_notify(hotspot_summary(next_hotspot_at))
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/event"):
         body = stripped[len("/event"):].strip()
         if not body:
             _safe_notify("⚠️ 用法：/event <事件描述>，例如：/event 今天和朋友聊了关于XX的事")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         try:
             evt = persona_add_event(body)
             _safe_notify(f"✅ 已记录事件\n\n📅 {evt['timestamp']}\n📝 {evt['raw']}")
         except Exception as exc:
             logger.warning(f"persona_add_event failed: {exc}")
             _safe_notify(f"❌ 记录失败：{exc}")
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
-    return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+    if command.startswith("/review"):
+        try:
+            parts = stripped.split()
+            days = int(parts[1]) if len(parts) >= 2 else 3
+            days = max(1, min(days, 30))
+        except (ValueError, IndexError):
+            days = 3
+        from src.context_builder import scan_reviewable_entries
+        entries = scan_reviewable_entries(days=days)
+        if not entries:
+            _safe_notify(f"📋 最近 {days} 天内没有待评价的条目。")
+        else:
+            lines = [f"📋 最近 {days} 天内待评价条目（共 {len(entries)} 条）："]
+            for e in entries:
+                icon = "💬" if e["kind"] == "reply" else "📝"
+                kind_label = "回复" if e["kind"] == "reply" else "帖子"
+                text_snippet = e["text_preview"].replace("\n", " ")
+                lines.append(f"{icon} `{e['stamp']}` {kind_label}: {text_snippet}")
+            _safe_notify("\n".join(lines))
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+
+    if command.startswith("/rate"):
+        parts = stripped.split()
+        try:
+            stamp = parts[1]
+            score = int(parts[2])
+            if score < 1 or score > 5:
+                _safe_notify("⚠️ 评分需在 1-5 之间。用法：/rate <id> <1-5> [点评]")
+                return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+            comment = " ".join(parts[3:]) if len(parts) >= 4 else ""
+        except (IndexError, ValueError):
+            _safe_notify("⚠️ 用法：/rate <id> <1-5> [点评]。例如：/rate 20260506_205028 4 不错，很自然")
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+        from src.context_builder import write_feedback
+        updated = write_feedback(stamp, score, comment)
+        if not updated:
+            _safe_notify(f"❌ 未找到条目 `{stamp}`。先用 /review 查看可评价的条目。")
+        else:
+            icon = "💬" if "reply_text" in updated else "📝"
+            text = str(updated.get("reply_text") or updated.get("post_text") or updated.get("best_effort_post_text") or "")[:60]
+            stars = "⭐" * score
+            confirm = f"{icon} 已评分\n\n{stars} {score}/5\n{text}"
+            if comment:
+                confirm += f"\n\n💭 {comment}"
+            _safe_notify(confirm)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+
+    return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
 
 def poll_updates(
@@ -638,11 +785,12 @@ def poll_updates(
     next_post_run_at: datetime,
     next_learn_at: datetime,
     next_revisit_at: datetime,
+    next_hotspot_at: datetime,
     run_trigger: str,
     active_label: str,
-) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, datetime, str, str]:
+) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, datetime, datetime, str, str]:
     if not telegram_enabled():
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     state = read_tg_state()
     params = {
@@ -662,13 +810,14 @@ def poll_updates(
             text = str(message.get("text") or "")
             if str(chat.get("id") or "") != allowed_chat:
                 continue
-            run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label = handle_command(
+            run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label = handle_command(
                 text,
                 run_proc,
                 next_run_at,
                 next_post_run_at,
                 next_learn_at,
                 next_revisit_at,
+                next_hotspot_at,
                 run_trigger,
                 active_label,
             )
@@ -681,7 +830,7 @@ def poll_updates(
                     state["update_offset"] = new_offset
                 except Exception as exc:
                     logger.warning(f"telegram offset persist failed: {exc}")
-    return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label
+    return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
 
 def main() -> int:
@@ -698,6 +847,7 @@ def main() -> int:
     next_post_run_at = next_proactive_after(now)
     next_learn_at = next_learning_after(now)
     next_revisit_at = next_revisit_after(now)
+    next_hotspot_at = next_hotspot_after(now)
     run_proc: subprocess.Popen[str] | None = None
     run_trigger = ""
     active_label = ""
@@ -722,6 +872,11 @@ def main() -> int:
                     and in_revisit_window(finished_at)
                     and next_revisit_at <= finished_at
                 )
+                carry_over_hotspot_slot = (
+                    active_label != "discover_hotspots.py"
+                    and hotspot_enabled()
+                    and next_hotspot_at <= finished_at
+                )
                 finish_run(run_proc, run_trigger, active_label or "job")
                 run_proc = None
                 run_trigger = ""
@@ -733,6 +888,7 @@ def main() -> int:
                     next_post_run_at = next_proactive_after(finished_at)
                 next_learn_at = next_learning_after(finished_at)
                 next_revisit_at = finished_at if carry_over_revisit_slot else next_revisit_after(finished_at)
+                next_hotspot_at = finished_at if carry_over_hotspot_slot else next_hotspot_after(finished_at)
 
             if run_proc is None and now >= next_run_at:
                 run_proc = start_job("run_once.py", "schedule")
@@ -759,6 +915,17 @@ def main() -> int:
                 next_learn_at = next_learning_after(now)
             elif (
                 run_proc is None
+                and hotspot_enabled()
+                and now >= next_hotspot_at
+                and (next_run_at - now).total_seconds() > hotspot_guard_seconds()
+                and (next_post_run_at - now).total_seconds() > hotspot_guard_seconds()
+            ):
+                run_proc = start_job("discover_hotspots.py", "schedule")
+                run_trigger = "schedule"
+                active_label = "discover_hotspots.py"
+                next_hotspot_at = next_hotspot_after(now)
+            elif (
+                run_proc is None
                 and in_revisit_window(now)
                 and now >= next_revisit_at
                 and (next_run_at - now).total_seconds() > revisit_guard_seconds()
@@ -770,12 +937,13 @@ def main() -> int:
                 next_revisit_at = next_revisit_after(now)
 
             try:
-                run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, run_trigger, active_label = poll_updates(
+                run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label = poll_updates(
                     run_proc,
                     next_run_at,
                     next_post_run_at,
                     next_learn_at,
                     next_revisit_at,
+                    next_hotspot_at,
                     run_trigger,
                     active_label,
                 )

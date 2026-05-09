@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 
 from src.common import (
+    HOTSPOT_HISTORY_DIR,
+    LATEST_HOTSPOT_RUN_PATH,
     POST_TOPICS_PATH,
     ensure_state_dirs,
     load_env_file,
@@ -21,22 +23,19 @@ from src.common import (
     write_json,
 )
 from src.hotspot.discover import discover_hotspots
-from src.hotspot.store import mark_added_to_queue, hotspot_stats
+from src.hotspot.store import mark_added_to_queue
 from src.logger import get_logger
 
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
 HOTSPOT_LOCK_PATH = ROOT / "state" / "hotspot_discover.lock"
-HOTSPOT_HISTORY_DIR = ROOT / "state" / "hotspot_history"
-LATEST_HOTSPOT_PATH = ROOT / "state" / "latest_hotspot_run.json"
 
 
 def _persist(record: dict, stamp: str) -> None:
-    write_json(LATEST_HOTSPOT_PATH, record)
+    write_json(LATEST_HOTSPOT_RUN_PATH, record)
     HOTSPOT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    safe = stamp.replace("/", "_").replace("\\", "_")
-    write_json(HOTSPOT_HISTORY_DIR / f"{safe}.json", record)
+    write_json(HOTSPOT_HISTORY_DIR / f"{stamp}.json", record)
 
 
 def _notify(record: dict) -> None:

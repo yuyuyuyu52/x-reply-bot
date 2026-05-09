@@ -40,6 +40,7 @@ bot 自动跟随热点，无需人工审核每一步。
 
 ### 生成要求
 - LLM prompt 必须要求输出观点，不是摘要
+- 不要用 hashtag，不要 emoji，禁止用破折号（——），禁止用引号
 - 赋予模型明确的 persona 约束，必须有立场
 - 每条帖子包含：热点引用 → 观点声明 → 论据支撑 → 结论/号召
 - 热点以 news_react 类型流入 post_topics.json 队列，复用现有 post_once.py 管线

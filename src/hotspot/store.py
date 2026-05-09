@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -106,14 +106,14 @@ def mark_added_to_queue(source: str, hotspot_id: str) -> None:
 
 def recent_hotspots(days: int = 1, limit: int = 20) -> list[dict]:
     conn = _get_conn()
-    cutoff = (datetime.now().astimezone()).strftime("%Y-%m-%d")
+    cutoff = (datetime.now().astimezone() - timedelta(days=days)).strftime("%Y-%m-%d")
     rows = conn.execute(
         """\
 SELECT id, source, title, url, hn_score, hn_descendants,
        relevance_score, relevance_reason, angle, cn_summary,
        discovered_at, added_to_queue
 FROM hotspots
-WHERE discovered_at >= ? AND added_to_queue = 1
+WHERE discovered_at >= ?
 ORDER BY relevance_score DESC, hn_score DESC
 LIMIT ?
 """,

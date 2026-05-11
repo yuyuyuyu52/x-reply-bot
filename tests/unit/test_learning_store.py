@@ -1,4 +1,4 @@
-"""Full helper coverage for ``src.learning_store``.
+"""Full helper coverage for ``src.learning.store``.
 
 Companion to ``test_learning_quality.py`` (which covers ``_best_label`` /
 ``QUALITY_RANK``). This file exercises the SQLite-backed helpers and locks
@@ -29,13 +29,13 @@ CST = timezone(timedelta(hours=8))
 
 
 def _fresh_module(tmp_state):
-    """Return ``src.learning_store`` with paths re-pointed at ``tmp_state``.
+    """Return ``src.learning.store`` with paths re-pointed at ``tmp_state``.
 
     ``tmp_state`` already re-targets STATE_DIR on the module if it was
     previously imported. We import here (post-fixture) so attribute reads
     see the patched values regardless of import order.
     """
-    from src import learning_store
+    from src.learning import store as learning_store
 
     # Defensive: confirm the conftest fixture re-pointed the path constants.
     assert str(learning_store.LEARNING_DB_PATH).startswith(str(tmp_state))
@@ -135,7 +135,7 @@ def tracking_sqlite(monkeypatch):
 
     # learning_store does `import sqlite3` then `sqlite3.connect(...)`, so
     # patching the attribute on the module's sqlite3 reference is enough.
-    from src import learning_store
+    from src.learning import store as learning_store
 
     monkeypatch.setattr(learning_store.sqlite3, "connect", fake_connect)
     return tracker

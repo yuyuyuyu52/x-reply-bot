@@ -17,7 +17,7 @@ from src.common import (
     topic_summary_text,
 )
 from src.image_search import image_search_available
-from src.learning_store import recent_learning_references
+from src.learning.store import recent_learning_references
 from src.context_builder import build_feedback_context, build_learning_context, build_persona_context, persona_context_dict
 from src.logger import get_logger
 

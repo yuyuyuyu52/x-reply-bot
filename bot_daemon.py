@@ -38,7 +38,7 @@ from src.common import (
     telegram_token,
     write_json,
 )
-from src.learning_store import learning_counts, top_learning_posts
+from src.learning.store import learning_counts, top_learning_posts
 from src.persona_store import add_event as persona_add_event
 
 from src.logger import get_logger
@@ -752,7 +752,7 @@ def handle_command(
             _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         _safe_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
-        return start_job("src/observe_feed.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/observe_feed.py"
+        return start_job("src/learning/observe.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/learning/observe.py"
 
     if command.startswith("/revisit_status"):
         _safe_notify(revisit_summary(next_revisit_at))
@@ -763,7 +763,7 @@ def handle_command(
             _safe_notify("⏳ 当前已有任务在执行。")
             return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         _safe_notify("📈 反馈回访\n\n✅ 已收到 /revisit_once，开始执行。")
-        return start_job("src/revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/revisit.py"
+        return start_job("src/learning/revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/learning/revisit.py"
 
     if command.startswith("/hotspot_discover"):
         if run_proc and run_proc.poll() is None:
@@ -963,7 +963,7 @@ def main() -> int:
                     and next_run_at <= finished_at
                 )
                 carry_over_revisit_slot = (
-                    active_label != "src/revisit.py"
+                    active_label != "src/learning/revisit.py"
                     and in_revisit_window(finished_at)
                     and next_revisit_at <= finished_at
                 )
@@ -1004,9 +1004,9 @@ def main() -> int:
                 and (next_run_at - now).total_seconds() > learning_guard_seconds()
                 and (next_post_run_at - now).total_seconds() > learning_guard_seconds()
             ):
-                run_proc = start_job("src/observe_feed.py", "schedule")
+                run_proc = start_job("src/learning/observe.py", "schedule")
                 run_trigger = "schedule"
-                active_label = "src/observe_feed.py"
+                active_label = "src/learning/observe.py"
                 next_learn_at = next_learning_after(now)
             elif (
                 run_proc is None
@@ -1028,9 +1028,9 @@ def main() -> int:
                 and (next_run_at - now).total_seconds() > revisit_guard_seconds()
                 and (next_post_run_at - now).total_seconds() > revisit_guard_seconds()
             ):
-                run_proc = start_job("src/revisit.py", "schedule")
+                run_proc = start_job("src/learning/revisit.py", "schedule")
                 run_trigger = "schedule"
-                active_label = "src/revisit.py"
+                active_label = "src/learning/revisit.py"
                 next_revisit_at = next_revisit_after(now)
 
             try:

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.common import HISTORY_DIR, POST_HISTORY_DIR
-from src.learning_store import recent_learning_references
+from src.learning.store import recent_learning_references
 from src.persona_store import get_generation_context
 
 

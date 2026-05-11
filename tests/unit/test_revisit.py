@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import src.revisit as revisit  # noqa: E402
+import src.learning.revisit as revisit  # noqa: E402
 
 CST = timezone(timedelta(hours=8))
 

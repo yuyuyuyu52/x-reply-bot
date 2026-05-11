@@ -1,4 +1,4 @@
-"""Sanity checks for `learning_store._best_label` quality ranking."""
+"""Sanity checks for `learning.store._best_label` quality ranking."""
 from __future__ import annotations
 
 import sys
@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.learning_store import _best_label, QUALITY_RANK  # noqa: E402
+from src.learning.store import _best_label, QUALITY_RANK  # noqa: E402
 
 
 class QualityRankTests(unittest.TestCase):

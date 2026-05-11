@@ -65,11 +65,11 @@ def tmp_state(tmp_path, monkeypatch):
     # Touch downstream modules that import STATE-derived constants at module load.
     for mod_name in (
         "src.persona_store",
-        "src.learning_store",
+        "src.learning.store",
         "src.context_builder",
         "src.topics",
-        "src.observe_feed",
-        "src.revisit",
+        "src.learning.observe",
+        "src.learning.revisit",
         "src.hotspot.store",
         "src.image_search",
     ):

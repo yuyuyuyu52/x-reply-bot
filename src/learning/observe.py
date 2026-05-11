@@ -29,7 +29,7 @@ from src.common import (
     model_name,
     run_harness,
 )
-from src.learning_store import (
+from src.learning.store import (
     ensure_learning_storage,
     record_learning_run,
     upsert_learning_post,
@@ -38,7 +38,7 @@ from src.logger import get_logger
 
 logger = get_logger(__name__)
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 ANALYSIS_PROMPT = """你在帮一个 X 账号做观察和学习。
 

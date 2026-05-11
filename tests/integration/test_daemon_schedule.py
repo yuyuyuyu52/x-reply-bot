@@ -107,7 +107,7 @@ def _simulate_carry_over(
         and next_run_at <= finished_at
     )
     carry_over_revisit_slot = (
-        active_label != "src/revisit.py"
+        active_label != "src/learning/revisit.py"
         and bd.in_revisit_window(finished_at)
         and next_revisit_at <= finished_at
     )

@@ -419,7 +419,7 @@ def test_normalize_thread_segments_truncates_by_cjk_weight(tmp_state):
     Locks down the P1 regression where len()-based truncation let through
     a 280-CJK segment whose tweet weight was 560 — silently broke posting.
     """
-    from src.post import post_generate
+    from src.post import post_generate, thread_generate
     from src.common import THREAD_MAX_SEGMENT_CHARS
 
     assert THREAD_MAX_SEGMENT_CHARS == 280
@@ -428,7 +428,7 @@ def test_normalize_thread_segments_truncates_by_cjk_weight(tmp_state):
     short1 = "短一" * 5
     short2 = "短二" * 5
 
-    out = post_generate.normalize_thread_segments([
+    out = thread_generate.normalize_thread_segments([
         {"text": big},
         {"text": short1},
         {"text": short2},

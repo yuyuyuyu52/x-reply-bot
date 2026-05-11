@@ -172,7 +172,9 @@ def test_thread_happy_path_three_segments(tmp_state, _retarget_topics_paths, mon
 
     plan = _make_thread_plan(["第一段内容", "第二段内容", "第三段内容"])
     monkeypatch.setattr(post_once, "generate_thread_plan", lambda t: plan)
-    monkeypatch.setattr(post_once, "telegram_enabled", lambda: False)
+    import src.post.handlers_common as handlers_common
+    import src.post.thread as thread_mod
+    monkeypatch.setattr(handlers_common, "telegram_enabled", lambda: False)
 
     posted_urls = [
         "https://x.com/me/status/1001",
@@ -198,7 +200,7 @@ def test_thread_happy_path_three_segments(tmp_state, _retarget_topics_paths, mon
             return _cp(stdout=stdout, rc=0)
         raise AssertionError(kind)
 
-    monkeypatch.setattr(post_once, "run", fake_run)
+    monkeypatch.setattr(thread_mod, "run", fake_run)
     monkeypatch.setattr(sys, "argv", ["post_once.py", "--trigger", "manual"])
 
     rc = post_once.main()
@@ -238,7 +240,9 @@ def test_thread_segment_empty_url_not_failure_no_retry(tmp_state, _retarget_topi
     # have empty URL and ensure no retry happens.)
     plan = _make_thread_plan(["seg one body", "seg two body", "seg three body"])
     monkeypatch.setattr(post_once, "generate_thread_plan", lambda t: plan)
-    monkeypatch.setattr(post_once, "telegram_enabled", lambda: False)
+    import src.post.handlers_common as handlers_common
+    import src.post.thread as thread_mod
+    monkeypatch.setattr(handlers_common, "telegram_enabled", lambda: False)
 
     call_count = {"post_send": 0, "send_reply": 0}
 
@@ -258,7 +262,7 @@ def test_thread_segment_empty_url_not_failure_no_retry(tmp_state, _retarget_topi
             return _cp(stdout='{"ok": true}\n', rc=0)
         raise AssertionError(kind)
 
-    monkeypatch.setattr(post_once, "run", fake_run)
+    monkeypatch.setattr(thread_mod, "run", fake_run)
     monkeypatch.setattr(sys, "argv", ["post_once.py", "--trigger", "manual"])
 
     rc = post_once.main()
@@ -291,7 +295,9 @@ def test_article_happy_path(tmp_state, _retarget_topics_paths, monkeypatch):
 
     plan = _make_article_plan()
     monkeypatch.setattr(post_once, "generate_article_plan", lambda t: plan)
-    monkeypatch.setattr(post_once, "telegram_enabled", lambda: False)
+    import src.post.handlers_common as handlers_common
+    import src.post.article as article_mod
+    monkeypatch.setattr(handlers_common, "telegram_enabled", lambda: False)
 
     article_url = "https://x.com/me/status/9999"
     call_count = {"article_send": 0}
@@ -307,7 +313,7 @@ def test_article_happy_path(tmp_state, _retarget_topics_paths, monkeypatch):
             }), rc=0)
         raise AssertionError(kind)
 
-    monkeypatch.setattr(post_once, "run", fake_run)
+    monkeypatch.setattr(article_mod, "run", fake_run)
     monkeypatch.setattr(sys, "argv", ["post_once.py", "--trigger", "manual"])
 
     rc = post_once.main()
@@ -332,7 +338,9 @@ def test_article_empty_url_not_failure_no_retry(tmp_state, _retarget_topics_path
 
     plan = _make_article_plan()
     monkeypatch.setattr(post_once, "generate_article_plan", lambda t: plan)
-    monkeypatch.setattr(post_once, "telegram_enabled", lambda: False)
+    import src.post.handlers_common as handlers_common
+    import src.post.article as article_mod
+    monkeypatch.setattr(handlers_common, "telegram_enabled", lambda: False)
 
     call_count = {"article_send": 0}
 
@@ -348,7 +356,7 @@ def test_article_empty_url_not_failure_no_retry(tmp_state, _retarget_topics_path
             }), rc=0)
         raise AssertionError(kind)
 
-    monkeypatch.setattr(post_once, "run", fake_run)
+    monkeypatch.setattr(article_mod, "run", fake_run)
     monkeypatch.setattr(sys, "argv", ["post_once.py", "--trigger", "manual"])
 
     rc = post_once.main()
@@ -380,7 +388,9 @@ def test_article_send_failed_topic_remains_pending(tmp_state, _retarget_topics_p
 
     plan = _make_article_plan()
     monkeypatch.setattr(post_once, "generate_article_plan", lambda t: plan)
-    monkeypatch.setattr(post_once, "telegram_enabled", lambda: False)
+    import src.post.handlers_common as handlers_common
+    import src.post.article as article_mod
+    monkeypatch.setattr(handlers_common, "telegram_enabled", lambda: False)
 
     def fake_run(cmd):
         kind = _which_script(cmd)
@@ -394,7 +404,7 @@ def test_article_send_failed_topic_remains_pending(tmp_state, _retarget_topics_p
             }), rc=1)
         raise AssertionError(kind)
 
-    monkeypatch.setattr(post_once, "run", fake_run)
+    monkeypatch.setattr(article_mod, "run", fake_run)
     monkeypatch.setattr(sys, "argv", ["post_once.py", "--trigger", "manual"])
 
     rc = post_once.main()

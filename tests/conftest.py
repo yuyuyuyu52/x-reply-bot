@@ -22,12 +22,18 @@ sys.path.insert(0, str(ROOT))
 BEIJING_TZ = timezone(timedelta(hours=8))
 
 
-def _retarget_state(module, target: Path) -> None:
-    """Re-point any module-level *_PATH / *_DIR constant that lives under STATE_DIR."""
-    if not hasattr(module, "STATE_DIR"):
-        return
-    original_root = Path(module.STATE_DIR)
-    module.STATE_DIR = target
+def _retarget_state(module, target: Path, original_root: Path | None = None) -> None:
+    """Re-point any module-level *_PATH / *_DIR constant that lives under STATE_DIR.
+
+    If ``original_root`` is provided it overrides the module's own STATE_DIR
+    (which lets us retarget modules that imported individual *_PATH constants
+    without bringing STATE_DIR with them).
+    """
+    if original_root is None:
+        if not hasattr(module, "STATE_DIR"):
+            return
+        original_root = Path(module.STATE_DIR)
+        module.STATE_DIR = target
     for name in dir(module):
         if not (name.endswith("_PATH") or name.endswith("_DIR")):
             continue
@@ -60,6 +66,10 @@ def tmp_state(tmp_path, monkeypatch):
 
     from src import common as common_mod  # noqa: WPS433 -- runtime import is the point
 
+    # Capture the common.STATE_DIR currently in effect before mutating it,
+    # so we can also retarget downstream modules that imported individual
+    # *_PATH constants (i.e. modules without their own STATE_DIR attribute).
+    pre_common_state_dir = Path(common_mod.STATE_DIR)
     _retarget_state(common_mod, state_dir)
 
     # Touch downstream modules that import STATE-derived constants at module load.
@@ -72,9 +82,12 @@ def tmp_state(tmp_path, monkeypatch):
         "src.learning.revisit",
         "src.hotspot.store",
         "src.image_search",
+        "src.post.handlers_common",
+        "src.post.thread",
+        "src.post.article",
     ):
         if mod_name in sys.modules:
-            _retarget_state(sys.modules[mod_name], state_dir)
+            _retarget_state(sys.modules[mod_name], state_dir, original_root=pre_common_state_dir)
 
     yield state_dir
 

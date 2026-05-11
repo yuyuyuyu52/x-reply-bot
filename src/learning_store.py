@@ -7,10 +7,8 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from src.common import ensure_state_dirs, load_json, write_json
+from src.common import STATE_DIR, ensure_state_dirs, load_json, write_json
 
-ROOT = Path(__file__).resolve().parent.parent
-STATE_DIR = ROOT / "state"
 LEARNING_DB_PATH = STATE_DIR / "learning.db"
 LEARNING_HISTORY_DIR = STATE_DIR / "learning_history"
 LATEST_LEARNING_RUN_PATH = STATE_DIR / "latest_learning_run.json"

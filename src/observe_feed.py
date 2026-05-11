@@ -19,6 +19,8 @@ from src.common import (
     normalize_status_url,
     looks_supported_language,
     LATEST_POST_RUN_PATH,
+    OBSERVE_LOCK_PATH,
+    FOLLOW_TODAY_PATH,
     chat_json_result,
     ensure_state_dirs,
     estimate_cost,
@@ -37,8 +39,6 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
-LOCK_PATH = ROOT / "state" / "observe_feed.lock"
-FOLLOW_TODAY_PATH = ROOT / "state" / "follow_today.json"
 
 ANALYSIS_PROMPT = """你在帮一个 X 账号做观察和学习。
 
@@ -424,13 +424,11 @@ wait(3)
 
 followed = js("""
 (() => {{
-  const btns = Array.from(document.querySelectorAll('[role="button"]'));
-  const followBtn = btns.find(btn => btn.innerText.includes('Follow') || btn.innerText.includes('关注'));
-  const followingBtn = btns.find(btn => btn.innerText.includes('Following') || btn.innerText.includes('正在关注'));
-
-  if (followingBtn) {{
+  const unfollowBtn = document.querySelector('[data-testid$="-unfollow"]');
+  if (unfollowBtn) {{
     return {{ok: true, action: 'already_following'}};
   }}
+  const followBtn = document.querySelector('[data-testid$="-follow"]');
   if (followBtn) {{
     followBtn.click();
     return {{ok: true, action: 'followed'}};
@@ -467,7 +465,7 @@ def main() -> int:
     ensure_state_dirs()
     ensure_learning_storage()
 
-    lock_fh = LOCK_PATH.open("w")
+    lock_fh = OBSERVE_LOCK_PATH.open("w")
     try:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:

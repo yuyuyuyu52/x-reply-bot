@@ -68,7 +68,7 @@ def main() -> int:
     # ---- Build like block ----
     if do_like:
         like_block = """
-        like_result = js('''
+    like_result = js('''
 (() => {{
   const btn = document.querySelector('[data-testid="like"]');
   if (!btn) return {{ok:false, reason:'no like button'}};

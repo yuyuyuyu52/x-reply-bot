@@ -20,6 +20,7 @@ single Chrome session.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import sys
 import textwrap
@@ -30,6 +31,8 @@ from src.common import (
     HISTORY_DIR,
     LATEST_REVISIT_RUN_PATH,
     POST_HISTORY_DIR,
+    REVISIT_HISTORY_DIR,
+    REVISIT_LOCK_PATH,
     ensure_state_dirs,
     load_env_file,
     run_harness,
@@ -183,11 +186,23 @@ _PRIMARY_ARIA_JS = r"""
 
 _REPLY_SCAN_JS_TEMPLATE = r"""
 ((target, ownHandle) => {
+  // Normalize whitespace + strip zero-width chars so t.co expansion and DOM
+  // whitespace shifts don't sink the match. Mirrors the snippet-based URL
+  // resolution in post_send.py (first-N-chars fallback).
+  const normalize = (s) => (s || '')
+    .replace(/[​-‍﻿]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normTarget = normalize(target);
+  const prefix = normTarget.slice(0, 60);
   const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
   for (const article of articles) {
     const textBlock = article.querySelector('[data-testid="tweetText"]');
-    const text = (textBlock && textBlock.innerText || '').trim();
-    if (!text || text !== target) continue;
+    const text = normalize(textBlock && textBlock.innerText || '');
+    if (!text) continue;
+    let isMatch = text === normTarget;
+    if (!isMatch && prefix && text.startsWith(prefix)) isMatch = true;
+    if (!isMatch) continue;
     if (ownHandle) {
       const userBlock = article.querySelector('[data-testid="User-Name"]');
       const userText = (userBlock && userBlock.innerText || '').toLowerCase();
@@ -350,7 +365,28 @@ def main() -> int:
     load_env_file()
     ensure_state_dirs()
 
-    now = datetime.now().astimezone()
+    lock_fh = REVISIT_LOCK_PATH.open("w")
+    try:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(json.dumps({"ok": False, "error": "revisit already running"}, ensure_ascii=False))
+        lock_fh.close()
+        return 3
+
+    try:
+        return _run(args)
+    finally:
+        try:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        lock_fh.close()
+
+
+def _run(args) -> int:
+    started = datetime.now().astimezone()
+    stamp = started.strftime("%Y%m%d_%H%M%S")
+    now = started
     pending = find_pending(now)
 
     summary = {
@@ -363,6 +399,7 @@ def main() -> int:
         "failed": 0,
         "deleted": 0,
         "items": [],
+        "total_cost_cny": 0.0,
     }
 
     if args.dry_run:
@@ -374,7 +411,7 @@ def main() -> int:
             }
             for item in pending
         ]
-        write_json(LATEST_REVISIT_RUN_PATH, summary)
+        _persist_summary(summary, stamp)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
 
@@ -446,9 +483,20 @@ def main() -> int:
         summary["items"].append(item_summary)
         summary["processed"] += 1
 
-    write_json(LATEST_REVISIT_RUN_PATH, summary)
+    _persist_summary(summary, stamp)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
+
+
+def _persist_summary(summary: dict, stamp: str) -> None:
+    """Write the run summary to both the latest-pointer and per-stamp history.
+
+    Matches the dual-write pattern used by run_once._persist_record,
+    post_once, and discover_hotspots._persist (CLAUDE.md rule 8).
+    """
+    write_json(LATEST_REVISIT_RUN_PATH, summary)
+    REVISIT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    write_json(REVISIT_HISTORY_DIR / f"{stamp}.json", summary)
 
 
 if __name__ == "__main__":

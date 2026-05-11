@@ -13,6 +13,8 @@ from pathlib import Path
 from src.common import (
     exclusive_lock,
     LATEST_RUN_PATH,
+    RUN_LOCK_PATH,
+    SELECTED_PATH,
     append_log,
     ensure_state_dirs,
     history_path_for,
@@ -27,7 +29,6 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
-RUN_LOCK_PATH = ROOT / "state" / "run_once.lock"
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -96,7 +97,7 @@ def main() -> int:
         sys.stdout.write(prep.stdout)
         sys.stderr.write(prep.stderr)
         if prep.returncode != 0:
-            selected = load_json(ROOT / "state" / "selected_post.json", {})
+            selected = load_json(SELECTED_PATH, {})
             prep_reason = str(selected.get("reason") or "").strip()
             if prep_reason in {"ai_rejected_all_candidates", "no_suitable_feed_candidates"}:
                 logger.warning("run_once skipped reason=%s", prep_reason)
@@ -112,7 +113,7 @@ def main() -> int:
             logger.error("run_once prepare failed exit=%d", prep.returncode)
             return prep.returncode
 
-        selected = load_json(ROOT / "state" / "selected_post.json", {})
+        selected = load_json(SELECTED_PATH, {})
 
         logger.info("run_once step=generate")
         gen = run([sys.executable, str(ROOT / "src/reply/generate_reply.py")])

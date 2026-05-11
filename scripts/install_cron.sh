@@ -3,7 +3,7 @@ set -euo pipefail
 
 source "$(dirname "$0")/_common.sh"
 
-script="$X_REPLY_ROOT/scheduled_run.sh"
+script="$X_REPLY_ROOT/scripts/scheduled_run.sh"
 legacy="# x-reply-bot schedule"
 begin="# BEGIN x-reply-bot schedule"
 end="# END x-reply-bot schedule"

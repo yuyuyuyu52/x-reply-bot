@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.common import (
+    BOT_LOCK_PATH,
     DAILY_REPORT_STATE_PATH,
     HISTORY_DIR,
     LATEST_POST_RUN_PATH,
@@ -43,7 +44,8 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
-LOCK_PATH = ROOT / "state" / "bot.lock"
+# Re-export for backward compatibility with any code that previously imported LOCK_PATH from here.
+LOCK_PATH = BOT_LOCK_PATH
 
 
 def format_header(title: str) -> list[str]:
@@ -274,7 +276,7 @@ def status_text(
 
 
 def count_scheduled_posts(date_str: str) -> int:
-    history_dir = ROOT / "state" / "post_history"
+    history_dir = POST_HISTORY_DIR
     total = 0
     for path in sorted(history_dir.glob("*.json")):
         try:
@@ -565,7 +567,7 @@ def finish_run(run_proc: subprocess.Popen[str], trigger: str, label: str) -> Non
 
 
 def aggregate_daily_costs(date_str: str) -> dict:
-    history_dir = ROOT / "state" / "history"
+    history_dir = HISTORY_DIR
     records = []
     for path in sorted(history_dir.glob("*.json")):
         try:

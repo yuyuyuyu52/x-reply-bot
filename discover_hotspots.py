@@ -11,6 +11,7 @@ from pathlib import Path
 
 from src.common import (
     HOTSPOT_HISTORY_DIR,
+    HOTSPOT_LOCK_PATH,
     LATEST_HOTSPOT_RUN_PATH,
     ensure_state_dirs,
     load_env_file,
@@ -28,7 +29,6 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
-HOTSPOT_LOCK_PATH = ROOT / "state" / "hotspot_discover.lock"
 
 
 def _persist(record: dict, stamp: str) -> None:

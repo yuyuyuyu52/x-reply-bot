@@ -41,6 +41,16 @@ REVISIT_REPORT_STATE_PATH = STATE_DIR / "revisit_report_state.json"
 HOTSPOT_STORE_PATH = STATE_DIR / "hotspot.db"
 HOTSPOT_HISTORY_DIR = STATE_DIR / "hotspot_history"
 LATEST_HOTSPOT_RUN_PATH = STATE_DIR / "latest_hotspot_run.json"
+REVISIT_HISTORY_DIR = STATE_DIR / "revisit_history"
+BOT_LOCK_PATH = STATE_DIR / "bot.lock"
+RUN_LOCK_PATH = STATE_DIR / "run_once.lock"
+POST_LOCK_PATH = STATE_DIR / "post_once.lock"
+OBSERVE_LOCK_PATH = STATE_DIR / "observe_feed.lock"
+REVISIT_LOCK_PATH = STATE_DIR / "revisit.lock"
+HOTSPOT_LOCK_PATH = STATE_DIR / "hotspot_discover.lock"
+PERSONA_LOCK_PATH = STATE_DIR / "persona.lock"
+FOLLOW_TODAY_PATH = STATE_DIR / "follow_today.json"
+LOG_DIR = STATE_DIR / "logs"
 ENV_PATH = ROOT / ".env"
 VALID_POST_TOPIC_TYPES = {"news_react", "story", "argument", "casual", "thread", "article"}
 
@@ -75,6 +85,7 @@ def ensure_state_dirs() -> None:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     POST_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    REVISIT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_env_file() -> None:

@@ -14,6 +14,7 @@ from pathlib import Path
 from src.common import (
     exclusive_lock,
     LATEST_POST_RUN_PATH,
+    POST_LOCK_PATH,
     ensure_state_dirs,
     load_env_file,
     mark_post_topic_status,
@@ -32,7 +33,6 @@ from src.persona_store import add_recent_post
 logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
-POST_LOCK_PATH = ROOT / "state" / "post_once.lock"
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:

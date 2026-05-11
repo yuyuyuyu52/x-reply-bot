@@ -10,10 +10,9 @@ from __future__ import annotations
 import logging
 import os
 from logging.handlers import TimedRotatingFileHandler
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-LOG_DIR = ROOT / "state" / "logs"
+from src.common import LOG_DIR
+
 LOG_PATH = LOG_DIR / "x-reply-bot.log"
 
 _initialized = False

@@ -6,6 +6,11 @@ the learning-context and persona-context assembly logic.
 """
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from src.common import HISTORY_DIR, POST_HISTORY_DIR
 from src.learning_store import recent_learning_references
 from src.persona_store import get_generation_context
 
@@ -78,3 +83,143 @@ def persona_context_dict() -> dict:
         return get_generation_context()
     except Exception:
         return {}
+
+
+def _beijing_now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def _find_feedback_file(stamp: str) -> Path | None:
+    """Find a history or post_history JSON file by stamp (filename without .json)."""
+    safe = stamp.replace("/", "_").replace("\\", "_")
+    for d in (HISTORY_DIR, POST_HISTORY_DIR):
+        p = d / f"{safe}.json"
+        if p.exists():
+            return p
+    return None
+
+
+def scan_reviewable_entries(days: int = 3) -> list[dict]:
+    """Scan recent history/post_history for entries without human_feedback.
+
+    Returns a list of dicts: {stamp, kind, text_preview, time_beijing}
+    kind is 'reply' for HISTORY_DIR, 'post' for POST_HISTORY_DIR.
+    """
+    cutoff = _beijing_now() - timedelta(days=days)
+    entries: list[dict] = []
+
+    for d, kind in [(HISTORY_DIR, "reply"), (POST_HISTORY_DIR, "post")]:
+        if not d.exists():
+            continue
+        for f in sorted(d.iterdir(), reverse=True):
+            if not f.suffix == ".json":
+                continue
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if "human_feedback" in data:
+                continue
+            time_str = str(data.get("time_beijing") or data.get("time") or "")
+            try:
+                normalized = time_str.strip().replace("CST", "").strip()
+                normalized = normalized.replace(" ", "T", 1)
+                if "T" in normalized:
+                    head, sep, tail = normalized.partition("T")
+                    tail = tail.lstrip().replace(" ", "")
+                    if len(tail) >= 5 and tail[-5] in "+-" and ":" not in tail[-5:]:
+                        tail = tail[:-2] + ":" + tail[-2:]
+                    normalized = head + sep + tail
+                t = datetime.fromisoformat(normalized)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=timezone(timedelta(hours=8)))
+            except (ValueError, TypeError):
+                continue
+            if t < cutoff:
+                continue
+            stamp = f.stem
+            if kind == "reply":
+                text = str(data.get("reply_text") or data.get("post_text") or "")[:80]
+            else:
+                text = str(data.get("post_text") or data.get("best_effort_post_text") or "")[:80]
+            entries.append({
+                "stamp": stamp,
+                "kind": kind,
+                "text_preview": text,
+                "time_beijing": time_str,
+            })
+
+    entries.sort(key=lambda e: e["time_beijing"], reverse=True)
+    return entries
+
+
+def write_feedback(stamp: str, score: int, comment: str = "") -> dict | None:
+    """Write human_feedback to the matching history file. Returns the updated record or None."""
+    p = _find_feedback_file(stamp)
+    if not p:
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    now = _beijing_now()
+    data["human_feedback"] = {
+        "score": score,
+        "comment": comment.strip(),
+        "rated_at": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+    }
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return data
+
+
+def build_feedback_context(limit: int = 4) -> str:
+    """Build a text block with recent human feedback examples for prompt injection."""
+    scored: list[dict] = []
+    for d in (HISTORY_DIR, POST_HISTORY_DIR):
+        if not d.exists():
+            continue
+        for f in sorted(d.iterdir(), reverse=True):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, ValueError):
+                continue
+            fb = data.get("human_feedback")
+            if not fb or not isinstance(fb, dict):
+                continue
+            score = fb.get("score")
+            if not isinstance(score, (int, float)):
+                continue
+            text = str(data.get("reply_text") or data.get("post_text") or data.get("best_effort_post_text") or "")[:120]
+            comment = str(fb.get("comment") or "").strip()
+            scored.append({"score": int(score), "text": text, "comment": comment})
+
+    if not scored:
+        return ""
+
+    good = [s for s in scored if s["score"] >= 4][:2]
+    bad = [s for s in scored if s["score"] <= 2][:2]
+
+    lines: list[str] = []
+    if good:
+        lines.append("【好评示例（这些回复/帖子收到了高分，可参考其风格）】")
+        for s in good:
+            note = f" — {s['comment']}" if s["comment"] else ""
+            lines.append(f"- [{s['score']}分] {s['text']}{note}")
+    if bad:
+        lines.append("【差评示例（避免类似风格或内容）】")
+        for s in bad:
+            note = f" — {s['comment']}" if s["comment"] else ""
+            lines.append(f"- [{s['score']}分] {s['text']}{note}")
+
+    if not lines:
+        return ""
+
+    gen_hint = ""
+    if good:
+        gen_hint += "尽量模仿好评示例的语气、结构和具体程度。"
+    if bad:
+        gen_hint += "避免差评示例中的问题（太空泛、太AI、太像总结）。"
+    if gen_hint:
+        lines.append(gen_hint)
+
+    return "\n".join(lines)[:800]

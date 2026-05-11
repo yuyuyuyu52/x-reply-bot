@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import textwrap
+from datetime import datetime, timezone
+
+from src.harness import harness_upload_image_snippet, run_harness
+from src.common import SCREENSHOT_DIR, append_log, ensure_state_dirs, load_env_file
+from src.image_search import search_image, download_image, image_to_base64, cleanup_temp_image
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+def main() -> int:
+    load_env_file()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--title", required=True)
+    parser.add_argument("--body", required=True)
+    parser.add_argument("--image-query", default="")
+    args = parser.parse_args()
+    title = args.title.strip()
+    body = args.body.strip()
+    image_query = args.image_query.strip()
+    if not title:
+        logger.error("empty title")
+        return 2
+    if not body:
+        logger.error("empty body")
+        return 2
+
+    # ---- Image search & download ----
+    img_base64 = ""
+    img_mime = ""
+    image_info = {}
+    if image_query:
+        logger.info("image search query=%s", image_query)
+        result = search_image(image_query)
+        if result:
+            image_info = {
+                "source": result.get("source", ""),
+                "cost_cny": float(result.get("cost_cny") or 0),
+                "query": image_query,
+            }
+            logger.info("image found source=%s cost=%.4f", result.get("source"), image_info["cost_cny"])
+            b64_direct = result.get("b64_json", "")
+            if b64_direct:
+                img_base64 = b64_direct
+                img_mime = "image/png"
+                logger.info("image ready via b64_json len=%d", len(img_base64))
+            else:
+                image_url = result.get("url", "")
+                downloaded = download_image(image_url)
+                if downloaded:
+                    path, mime = downloaded
+                    img_base64, img_mime = image_to_base64(path)
+                    cleanup_temp_image(path)
+                    logger.info("image ready mime=%s bytes=%d", img_mime, len(img_base64))
+                else:
+                    logger.warning("image download failed, proceeding without image")
+        else:
+            logger.warning("no image found for query=%s, proceeding without image")
+
+    ensure_state_dirs()
+    ready_shot = SCREENSHOT_DIR / "x_article_ready.png"
+    posted_shot = SCREENSHOT_DIR / "x_article_posted.png"
+
+    # Image upload snippet
+    upload_snippet = ""
+    if img_base64:
+        upload_snippet = textwrap.indent(
+            harness_upload_image_snippet(img_base64, img_mime),
+            "        ",
+        )
+
+    code = f'''
+import json
+
+title = {json.dumps(title, ensure_ascii=False)}
+body = {json.dumps(body, ensure_ascii=False)}
+ready_shot = {json.dumps(str(ready_shot))}
+posted_shot = {json.dumps(str(posted_shot))}
+
+# Navigate to articles page
+tabs = list_tabs(include_chrome=False)
+for t in tabs:
+    if 'x.com' in t.get('url', ''):
+        switch_tab(t['targetId'])
+        break
+
+js('window.onbeforeunload = null')
+goto_url('https://x.com/compose/articles')
+wait_for_load(20)
+wait(4)
+
+# Click "撰写" button
+write_clicked = js("""
+(() => {{
+  const btn = document.querySelector('[data-testid="empty_state_button_text"]');
+  if (!btn) return {{ok:false, reason:'no write button'}};
+  btn.click();
+  return {{ok:true}};
+}})()
+""")
+if not write_clicked or not write_clicked.get('ok'):
+    print(json.dumps({{'ok': False, 'reason': 'no_write_button', 'detail': write_clicked}}, ensure_ascii=False))
+else:
+    wait_for_load(20)
+    wait(4)
+    info = page_info()
+    if '/compose/articles/edit/' not in (info.get('url') or ''):
+        print(json.dumps({{'ok': False, 'reason': 'article_editor_not_opened', 'url': info.get('url', '')}}, ensure_ascii=False))
+    else:
+        # ---- Type title ----
+        # X.com article title uses a hidden textarea (placeholder='添加标题')
+        # that appears after clicking the title area. Use CDP keyboard via
+        # click_at_xy + type_text for proper React event handling.
+        title_ta = js("""
+        (() => {{
+          const ta = document.querySelector('textarea[placeholder=\"添加标题\"]');
+          if (ta) {{
+            const r = ta.getBoundingClientRect();
+            return {{ok:true, x:r.left + 50, y:r.top + 20}};
+          }}
+          // Fallback: click the title display div
+          const titleDiv = document.querySelector('[data-testid=\"twitter-article-title\"]');
+          if (!titleDiv) return {{ok:false, reason:'no title element'}};
+          const r = titleDiv.getBoundingClientRect();
+          return {{ok:true, x:r.left + r.width / 2, y:r.top + r.height / 2}};
+        }})()
+        """)
+        if title_ta.get('ok'):
+            click_at_xy(title_ta['x'], title_ta['y'])
+            wait(0.5)
+            type_text(title)
+            wait(1)
+        else:
+            print(json.dumps({{'ok': False, 'reason': 'no title element', 'detail': title_ta}}, ensure_ascii=False))
+
+        # ---- Type body ----
+        body_focus = js("""
+        (() => {{
+          const el = document.querySelector('[data-testid="composer"][role="textbox"]');
+          if (!el) return {{ok:false, reason:'no body editor'}};
+          el.focus();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return {{ok:true}};
+        }})()
+        """)
+        wait(0.5)
+        type_text(body)
+        wait(2)
+        capture_screenshot(ready_shot)
+
+        # ---- Upload image (optional) ----
+{upload_snippet}
+
+        # ---- Click publish (opens sheetDialog) ----
+        publish_clicked = js("""
+        (() => {{
+          const btns = Array.from(document.querySelectorAll('button'));
+          const publish = btns.find(b => (b.innerText || '').trim() === '发布');
+          if (!publish) return {{ok:false, reason:'no publish button'}};
+          publish.click();
+          return {{ok:true}};
+        }})()
+        """)
+        wait(3)
+
+        # ---- Confirm publish in sheetDialog ----
+        confirm_clicked = js("""
+        (() => {{
+          const sheet = document.querySelector('[data-testid=\"sheetDialog\"]');
+          if (!sheet) return {{ok:false, reason:'no sheetDialog'}};
+          const btns = Array.from(sheet.querySelectorAll('button'));
+          const confirm = btns.find(b => (b.innerText || '').trim() === '发布');
+          if (!confirm) return {{ok:false, reason:'no confirm button in sheet'}};
+          confirm.click();
+          return {{ok:true}};
+        }})()
+        """)
+        wait(8)
+        capture_screenshot(posted_shot)
+
+        # After publish, X redirects to the article's status URL
+        final_info = page_info()
+        article_url = (final_info.get('url') or '')
+        sent_ok = '/status/' in article_url
+
+        print(json.dumps({{
+            'ok': sent_ok,
+            'title': title,
+            'body': body[:200],
+            'url': article_url,
+            'click_result': publish_clicked,
+            'confirm_result': confirm_clicked,
+            'page_info': final_info
+        }}, ensure_ascii=False, indent=2))
+'''
+    try:
+        stdout = run_harness(textwrap.dedent(code), timeout=120)
+        ok = '"ok": true' in stdout or "'ok': True" in stdout
+        append_log(
+            {
+                "time": datetime.now(timezone.utc).isoformat(),
+                "status": "success" if ok else "uncertain",
+                "title": title,
+                "body_preview": body[:100],
+                "image_query": image_query,
+            }
+        )
+        print(stdout)
+        if image_info:
+            print(f"IMAGE_INFO: {json.dumps(image_info, ensure_ascii=False)}")
+        return 0 if ok else 1
+    except Exception as exc:
+        append_log(
+            {
+                "time": datetime.now(timezone.utc).isoformat(),
+                "status": "exception",
+                "title": title,
+                "body_preview": body[:100],
+                "image_query": image_query,
+                "error": str(exc),
+            }
+        )
+        logger.error("%s", exc, exc_info=True)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

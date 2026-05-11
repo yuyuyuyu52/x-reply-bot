@@ -7,6 +7,10 @@ omitted unless they alter how the bot is configured or operated.
 
 ## [Unreleased]
 
+### Added
+- Add /review and /rate Telegram commands for human feedback scoring on replies and proactive posts
+- Feedback scores injected into reply and post generation prompts as style reference
+
 ### Fixed
 - 修复 `run_once.py` 缺少 `import fcntl` 导致 `NameError`
 - 修复 `src/common.py` 的 `ROOT` 指向 `src/` 而非 repo root，导致 `.env` 和 `state/` 路径错位

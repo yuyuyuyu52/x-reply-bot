@@ -552,7 +552,7 @@ def _fetch_source(source: str) -> list[dict]:
     elif source == "tldr_ai":
         stories = fetch_tldr_ai()
 
-    elif source in COMPANY_SOURCES:
+    elif source in COMPANY_X_ACCOUNTS:
         stories = fetch_company_news(source)
 
     return [{"source": source, **s} for s in stories]

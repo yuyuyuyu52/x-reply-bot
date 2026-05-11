@@ -10,7 +10,7 @@ from src.persona_store import get_generation_context
 AUTO_TOPIC_PROMPT = """你是一个真实 X 账号的主人，正在决定今天想发什么。
 
 输出严格 JSON：
-{"type":"casual|argument|story|news_react", "text":"...", "angle":"...", "reason":"..."}
+{"type":"casual|argument|story|news_react|thread|article", "text":"...", "angle":"...", "reason":"..."}
 
 选题规则：
 - 从 persona_context.static.content_pillars 里选一个最近帖子（recent_posts）覆盖较少的方向。
@@ -18,7 +18,15 @@ AUTO_TOPIC_PROMPT = """你是一个真实 X 账号的主人，正在决定今天
 - 如果 recent_events 为空：从 background 和 current_projects 推断这个人最近在想什么。
 - 禁止选最近三条帖子已经说过的角度或相近主题。
 - 禁止泛泛大话题，必须有一个具体切入点。
-- type 与内容匹配：随手感受用 casual，有论点用 argument，有故事用 story，有新闻用 news_react。
+- type 与内容匹配：
+  - 随手感受用 casual
+  - 有论点用 argument
+  - 有故事用 story
+  - 有新闻用 news_react
+  - 话题有层次递进关系（原因→现象→影响→观点），能撑起多段展开的，用 thread
+- thread 只在话题确实需要多段递进时才选，约 10-20% 的发帖适合用 thread。
+  - article：话题有足够深度，需要一个标题+正文来展开，适合写成独立文章。约 10-15% 的发帖适合用 article。
+  - 大部分发帖仍选 casual/argument/story/news_react。
 - text：选题描述，一句话，50 字以内，说清楚想说什么。
 - angle：具体切入角度，20 字以内。
 - reason：为什么现在想说这个，20 字以内。

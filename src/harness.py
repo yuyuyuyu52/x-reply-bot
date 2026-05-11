@@ -245,3 +245,59 @@ else:
         wait(6)
         body = js('document.body.innerText') or ''
 '''
+
+
+def harness_upload_image_snippet(
+    base64_value: str = "",
+    mime_value: str = "",
+) -> str:
+    """Return a harness code snippet that uploads an image to the X composer.
+
+    Args:
+        base64_value: The actual base64-encoded image bytes (not a variable name).
+        mime_value: The actual MIME type string (e.g. "image/gif"), not a variable name.
+
+    The snippet finds the file input, decodes the image, sets it via
+    DataTransfer, and waits for the upload preview to appear.
+    """
+    return f'''
+# Upload image to composer
+img_upload = js("""
+(async () => {{
+  const input = document.querySelector('[data-testid="fileInput"]');
+  if (!input) return {{ok:false, reason:'no file input'}};
+
+  const b64 = {json.dumps(base64_value)};
+  const mime = {json.dumps(mime_value)};
+  const byteChars = atob(b64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) {{
+    bytes[i] = byteChars.charCodeAt(i);
+  }}
+  const blob = new Blob([bytes], {{type: mime}});
+  const ext = mime.split('/')[1] || 'gif';
+  const file = new File([blob], 'img.' + ext, {{type: mime}});
+
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change', {{bubbles: true}}));
+  input.dispatchEvent(new Event('input', {{bubbles: true}}));
+
+  // Wait for upload preview to appear (max 15 seconds)
+  for (let i = 0; i < 30; i++) {{
+    await new Promise(r => setTimeout(r, 500));
+    const progress = document.querySelector('[data-testid="progressBar"]');
+    const preview = document.querySelector('[data-testid="attachments"]');
+    const removeBtn = document.querySelector('[aria-label="Remove media"]');
+    if (preview || removeBtn) return {{ok:true, has_preview: true}};
+    // If progress bar disappeared with no preview, upload likely failed
+  }}
+  return {{ok:false, reason:'upload timeout - no preview appeared'}};
+}})()
+""")
+if not img_upload or not img_upload.get('ok'):
+    print(json.dumps({{'ok': False, 'reason': 'image_upload_failed', 'upload_result': img_upload}}, ensure_ascii=False))
+else:
+    wait(2)
+'''

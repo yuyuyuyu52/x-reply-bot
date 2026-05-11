@@ -43,9 +43,13 @@ def notify_text(record: dict) -> str:
         'quote': '🔁 引用 (Quote)',
         'repost': '🔄 转发 (Repost)'
     }.get(action, '💬 回复')
+    extras = []
+    if record.get('like'):
+        extras.append('❤️ 已点赞')
+    heading = " ".join([action_label] + extras)
     text = "\n".join(
         [
-            action_label,
+            heading,
             "",
             f"🕒 时间: {record['time_beijing']}",
             f"⚙️ 触发: {record['trigger']}",
@@ -121,6 +125,7 @@ def main() -> int:
         reply_text = str(reply_payload.get("reply") or "").strip()
         action = str(reply_payload.get("action") or "reply").strip()
         reply_reason = str(reply_payload.get("reason") or "").strip()
+        like = bool(reply_payload.get("like")) if "like" in reply_payload else False
         reply_source_url = str(reply_payload.get("source_post_url") or "").strip()
         reply_selection_id = str(reply_payload.get("selection_id") or "").strip()
         reply_usage = reply_payload.get("usage") or {}
@@ -131,8 +136,8 @@ def main() -> int:
         selected_url = str(selected.get("url") or "").strip()
         selected_selection_id = str(selected.get("selection_id") or "").strip()
         if reply_source_url != selected_url or reply_selection_id != selected_selection_id:
-            logger.error("run_once mismatch selected_url=%s reply_url=%s selected_id=%s reply_id=%s",
-                         selected_url, reply_source_url, selected_selection_id, reply_selection_id)
+            logger.error("run_once mismatch action=%s selected_url=%s reply_url=%s selected_id=%s reply_id=%s",
+                         action, selected_url, reply_source_url, selected_selection_id, reply_selection_id)
             print(
                 json.dumps(
                     {
@@ -149,8 +154,16 @@ def main() -> int:
             )
             return 1
 
-        logger.info("run_once step=send action=%s", action)
-        send = run([sys.executable, str(ROOT / "src/reply/send_reply.py"), "--url", selected_url, "--reply", reply_text, "--action", action])
+        logger.info("run_once step=send action=%s like=%s", action, like)
+        send_cmd = [
+            sys.executable, str(ROOT / "src/reply/send_reply.py"),
+            "--url", selected_url,
+            "--reply", reply_text,
+            "--action", action,
+        ]
+        if like:
+            send_cmd.append("--like")
+        send = run(send_cmd)
         sys.stdout.write(send.stdout)
         sys.stderr.write(send.stderr)
 
@@ -171,6 +184,7 @@ def main() -> int:
             "action": action,
             "reply_text": reply_text,
             "reply_reason": reply_reason,
+            "like": like,
             "selection_model": selected.get("selection_model", ""),
             "selection_usage": selection_usage,
             "selection_cost": selection_cost,
@@ -187,6 +201,7 @@ def main() -> int:
             {
                 "time": started.isoformat(),
                 "status": "success" if send.returncode == 0 else "failed",
+                "action": action,
                 "trigger": args.trigger,
                 "url": record["post_url"],
                 "reply": record["reply_text"],

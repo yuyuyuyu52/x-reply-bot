@@ -12,10 +12,9 @@ from pathlib import Path
 from src.common import (
     HOTSPOT_HISTORY_DIR,
     LATEST_HOTSPOT_RUN_PATH,
-    POST_TOPICS_PATH,
     ensure_state_dirs,
     load_env_file,
-    load_json,
+    load_post_topics,
     normalize_post_topic,
     save_post_topics,
     telegram_enabled,
@@ -91,74 +90,73 @@ def main() -> int:
 
     try:
         result = discover_hotspots()
+
+        if not result.get("ok"):
+            record = {
+                "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "date_beijing": started.strftime("%Y-%m-%d"),
+                "trigger": args.trigger,
+                "status": "error",
+                "error": result.get("error", ""),
+                "total_cost_cny": result.get("total_cost_cny", 0.0),
+            }
+            _persist(record, stamp)
+            logger.error("hotspot_discover failed: %s", result.get("error", ""))
+            print(json.dumps(record, ensure_ascii=False, indent=2))
+            return 1
+
+        items = result.get("items", [])
+        added_items: list[dict] = []
+        if items and not args.dry_run:
+            data = load_post_topics()
+            topics = data.setdefault("topics", [])
+            for item in items:
+                topic = normalize_post_topic({
+                    "id": f"hotspot-{item['source']}-{item['id']}",
+                    "type": "news_react",
+                    "text": item["cn_summary"],
+                    "source": "hotspot",
+                    "status": "pending",
+                    "subject": item["title"],
+                    "event_or_context": f"今天[{item['source']}] {item['relevance_reason']} | 原链接: {item['url']}",
+                    "stance": item["angle"],
+                    "evidence_hint": f"热度: {item['hn_score']}↑ {item['hn_descendants']}💬 | 相关度: {item['relevance_score']}/5",
+                })
+                topics.append(topic)
+                mark_added_to_queue(item["source"], item["id"])
+                added_items.append({
+                    "source": item["source"],
+                    "title": item["title"],
+                    "cn_summary": item["cn_summary"],
+                    "angle": item["angle"],
+                    "relevance_score": item["relevance_score"],
+                })
+            save_post_topics(data)
+
+        record = {
+            "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "date_beijing": started.strftime("%Y-%m-%d"),
+            "trigger": args.trigger,
+            "dry_run": args.dry_run,
+            "status": "ok",
+            "discovered": result.get("discovered", 0),
+            "added": result.get("added", 0),
+            "skipped_seen": result.get("skipped_seen", 0),
+            "filtered_out": result.get("filtered_out", 0),
+            "added_items": added_items,
+            "total_cost_cny": result.get("total_cost_cny", 0.0),
+        }
+        _persist(record, stamp)
+        _notify(record)
+        logger.info("hotspot_discover done discovered=%d added=%d", record["discovered"], record["added"])
+        print(json.dumps(record, ensure_ascii=False, indent=2))
+        return 0
     finally:
         try:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         except Exception:
             pass
         lock_fh.close()
-
-    if not result.get("ok"):
-        record = {
-            "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
-            "date_beijing": started.strftime("%Y-%m-%d"),
-            "trigger": args.trigger,
-            "status": "error",
-            "error": result.get("error", ""),
-            "total_cost_cny": result.get("total_cost_cny", 0.0),
-        }
-        _persist(record, stamp)
-        logger.error("hotspot_discover failed: %s", result.get("error", ""))
-        print(json.dumps(record, ensure_ascii=False, indent=2))
-        return 1
-
-    # --- Add relevant hotspots to topic queue ---
-    items = result.get("items", [])
-    added_items: list[dict] = []
-    if items and not args.dry_run:
-        data = load_json(POST_TOPICS_PATH, {"topics": []})
-        topics = data.get("topics", [])
-        for item in items:
-            topic = normalize_post_topic({
-                "id": f"hotspot-{item['source']}-{item['id']}",
-                "type": "news_react",
-                "text": item["cn_summary"],
-                "source": "hotspot",
-                "status": "pending",
-                "subject": item["title"],
-                "event_or_context": f"今天[{item['source']}] {item['relevance_reason']} | 原链接: {item['url']}",
-                "stance": item["angle"],
-                "evidence_hint": f"热度: {item['hn_score']}↑ {item['hn_descendants']}💬 | 相关度: {item['relevance_score']}/5",
-            })
-            topics.append(topic)
-            mark_added_to_queue(item["source"], item["id"])
-            added_items.append({
-                "source": item["source"],
-                "title": item["title"],
-                "cn_summary": item["cn_summary"],
-                "angle": item["angle"],
-                "relevance_score": item["relevance_score"],
-            })
-        save_post_topics(data)
-
-    record = {
-        "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        "date_beijing": started.strftime("%Y-%m-%d"),
-        "trigger": args.trigger,
-        "dry_run": args.dry_run,
-        "status": "ok",
-        "discovered": result.get("discovered", 0),
-        "added": result.get("added", 0),
-        "skipped_seen": result.get("skipped_seen", 0),
-        "filtered_out": result.get("filtered_out", 0),
-        "added_items": added_items,
-        "total_cost_cny": result.get("total_cost_cny", 0.0),
-    }
-    _persist(record, stamp)
-    _notify(record)
-    logger.info("hotspot_discover done discovered=%d added=%d", record["discovered"], record["added"])
-    print(json.dumps(record, ensure_ascii=False, indent=2))
-    return 0
 
 
 if __name__ == "__main__":

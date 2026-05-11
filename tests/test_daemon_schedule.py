@@ -82,5 +82,135 @@ class ReplyScheduleTests(unittest.TestCase):
         self.assertEqual(slot, at(7, 0, day=6))
 
 
+def _simulate_carry_over(
+    *,
+    active_label: str,
+    finished_at: datetime,
+    next_run_at: datetime,
+    next_post_run_at: datetime,
+    next_revisit_at: datetime,
+    next_hotspot_at: datetime,
+    hotspot_enabled: bool = True,
+) -> dict:
+    """Replicates the carry-over arithmetic from bot_daemon.main().
+
+    Kept in lock-step with the post-job block. If the daemon's logic
+    changes, this helper must change too — that's the point: the helper
+    documents the invariant.
+    """
+    carry_over_post_slot = (
+        not active_label.startswith("post_once.py")
+        and next_post_run_at <= finished_at
+    )
+    carry_over_reply_slot = (
+        active_label != "run_once.py"
+        and next_run_at <= finished_at
+    )
+    carry_over_revisit_slot = (
+        active_label != "src/revisit.py"
+        and bd.in_revisit_window(finished_at)
+        and next_revisit_at <= finished_at
+    )
+    carry_over_hotspot_slot = (
+        active_label != "discover_hotspots.py"
+        and hotspot_enabled
+        and next_hotspot_at <= finished_at
+    )
+    return {
+        "next_run_at": finished_at if carry_over_reply_slot else bd.next_scheduled_after(finished_at),
+        "next_post_run_at": finished_at if carry_over_post_slot else bd.next_proactive_after(finished_at),
+        "next_revisit_at": finished_at if carry_over_revisit_slot else bd.next_revisit_after(finished_at),
+        "next_hotspot_at": finished_at if carry_over_hotspot_slot else bd.next_hotspot_after(finished_at),
+    }
+
+
+class CarryOverTests(unittest.TestCase):
+    """Cover the slot-carry-over invariant called out in bot_daemon.main().
+
+    Scenario: a long-running job is active while another slot's due-time
+    elapses. When the job finishes, the elapsed slot must be carried over
+    (next-fire = finished_at) rather than skipped to its next normal
+    window — otherwise the daemon silently drops slots.
+    """
+
+    def test_long_running_reply_carries_over_proactive_slot(self):
+        # Reply job starts at 10:55, finishes at 11:05. Proactive 11:00
+        # slot fired during the run. It must be carried over.
+        finished = at(11, 5)
+        sim = _simulate_carry_over(
+            active_label="run_once.py",
+            finished_at=finished,
+            next_run_at=at(12, 0),       # next reply slot still in future
+            next_post_run_at=at(11, 0),  # post slot fired during the run
+            next_revisit_at=at(23, 0),
+            next_hotspot_at=at(13, 0),
+        )
+        # Post slot carried over to finished_at.
+        self.assertEqual(sim["next_post_run_at"], finished)
+        # Reply was the active job → never carries itself over.
+        self.assertEqual(sim["next_run_at"], bd.next_scheduled_after(finished))
+
+    def test_long_running_post_carries_over_reply_slot(self):
+        # Post job runs across the top of an hour; reply slot fired
+        # during the run.
+        finished = at(11, 30)
+        sim = _simulate_carry_over(
+            active_label="post_once.py",
+            finished_at=finished,
+            next_run_at=at(11, 0),       # reply slot fired during the run
+            next_post_run_at=at(19, 0),
+            next_revisit_at=at(23, 0),
+            next_hotspot_at=at(13, 0),
+        )
+        self.assertEqual(sim["next_run_at"], finished)
+        # Post job was active → its own slot is recomputed normally.
+        self.assertEqual(sim["next_post_run_at"], bd.next_proactive_after(finished))
+
+    def test_carry_over_skipped_when_slot_still_future(self):
+        # No slot elapsed during the run → nothing to carry over.
+        finished = at(10, 30)
+        sim = _simulate_carry_over(
+            active_label="run_once.py",
+            finished_at=finished,
+            next_run_at=at(12, 0),
+            next_post_run_at=at(11, 0),
+            next_revisit_at=at(23, 0),
+            next_hotspot_at=at(13, 0),
+        )
+        # Both still in the future → standard recomputation, NOT finished_at.
+        self.assertEqual(sim["next_post_run_at"], bd.next_proactive_after(finished))
+        self.assertEqual(sim["next_run_at"], bd.next_scheduled_after(finished))
+
+    def test_revisit_carry_over_only_inside_window(self):
+        # Revisit slot only carries over if finished_at is still inside the
+        # nightly window. At 08:00 the window has closed, so even if the
+        # stored next_revisit_at is in the past, we must NOT pin to
+        # finished_at — we should fall through to next_revisit_after().
+        finished = at(8, 0)
+        sim = _simulate_carry_over(
+            active_label="run_once.py",
+            finished_at=finished,
+            next_run_at=at(9, 0),
+            next_post_run_at=at(11, 0),
+            next_revisit_at=at(7, 30),  # in the past, but window is closed
+            next_hotspot_at=at(13, 0),
+        )
+        self.assertEqual(sim["next_revisit_at"], bd.next_revisit_after(finished))
+
+    def test_hotspot_disabled_disables_carry_over(self):
+        finished = at(12, 0)
+        sim = _simulate_carry_over(
+            active_label="run_once.py",
+            finished_at=finished,
+            next_run_at=at(13, 0),
+            next_post_run_at=at(19, 0),
+            next_revisit_at=at(23, 0),
+            next_hotspot_at=at(11, 0),  # elapsed
+            hotspot_enabled=False,
+        )
+        # Disabled → never pin to finished_at, recompute normally.
+        self.assertEqual(sim["next_hotspot_at"], bd.next_hotspot_after(finished))
+
+
 if __name__ == "__main__":
     unittest.main()

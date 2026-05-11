@@ -10,6 +10,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 from src.common import env_first, model_name, base_url, api_key
 from src.logger import get_logger
@@ -18,8 +19,13 @@ logger = get_logger(__name__)
 
 
 def provider_mode() -> str:
-    url = base_url().rstrip("/").lower()
-    if url.endswith("/anthropic") or "/anthropic" in url:
+    # Match the path component structurally so URLs like
+    # ``https://example.com/anthropic-compat-shim/openai`` are not falsely
+    # classified as Anthropic. Only treat the URL as Anthropic when the
+    # final path segment is exactly ``anthropic``.
+    raw = base_url().strip().lower()
+    path = urlparse(raw).path.rstrip("/")
+    if path.endswith("/anthropic") or path == "/anthropic" or path == "anthropic":
         return "anthropic"
     return "openai"
 
@@ -296,26 +302,35 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
     completion_tokens = int(usage.get("completion_tokens") or 0)
     selected_model = (model or model_name()).strip()
 
-    if selected_model == "qwen3.5-flash":
-        rates = qwen35_flash_rates(prompt_tokens)
-        input_cost = prompt_tokens / 1_000_000 * rates["input_per_million"]
-        output_cost = completion_tokens / 1_000_000 * rates["output_per_million"]
-    elif selected_model in {
+    # Match versioned names like ``qwen3.5-flash-20250413`` or
+    # ``MiniMax-M2.7-20250930``. Server returns a date-suffixed model id;
+    # falling back to exact equality silently zeroes out cost reporting.
+    highspeed_prefixes = (
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.1-highspeed",
+    )
+    minimax_prefixes = (
         "MiniMax-M2.7",
         "MiniMax-M2.5",
         "MiniMax-M2.1",
         "MiniMax-M2",
         "M2-her",
-    }:
-        rates = {"input_per_million": 2.1, "output_per_million": 8.4}
+    )
+
+    if selected_model.startswith("qwen3.5-flash"):
+        rates = qwen35_flash_rates(prompt_tokens)
         input_cost = prompt_tokens / 1_000_000 * rates["input_per_million"]
         output_cost = completion_tokens / 1_000_000 * rates["output_per_million"]
-    elif selected_model in {
-        "MiniMax-M2.7-highspeed",
-        "MiniMax-M2.5-highspeed",
-        "MiniMax-M2.1-highspeed",
-    }:
+    elif selected_model.startswith(highspeed_prefixes):
+        # NOTE: order matters — must test ``-highspeed`` suffixes before the
+        # bare ``MiniMax-M2.x`` prefixes below, otherwise highspeed variants
+        # would match the cheaper non-highspeed tier first.
         rates = {"input_per_million": 4.2, "output_per_million": 16.8}
+        input_cost = prompt_tokens / 1_000_000 * rates["input_per_million"]
+        output_cost = completion_tokens / 1_000_000 * rates["output_per_million"]
+    elif selected_model.startswith(minimax_prefixes):
+        rates = {"input_per_million": 2.1, "output_per_million": 8.4}
         input_cost = prompt_tokens / 1_000_000 * rates["input_per_million"]
         output_cost = completion_tokens / 1_000_000 * rates["output_per_million"]
     else:

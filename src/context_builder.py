@@ -136,7 +136,9 @@ def scan_reviewable_entries(days: int = 3) -> list[dict]:
             except (ValueError, TypeError):
                 continue
             if t < cutoff:
-                continue
+                # Files are iterated newest-first; once we've crossed the cutoff,
+                # every subsequent file is older still — stop scanning this dir.
+                break
             stamp = f.stem
             if kind == "reply":
                 text = str(data.get("reply_text") or data.get("post_text") or "")[:80]
@@ -174,11 +176,18 @@ def write_feedback(stamp: str, score: int, comment: str = "") -> dict | None:
 
 def build_feedback_context(limit: int = 4) -> str:
     """Build a text block with recent human feedback examples for prompt injection."""
-    scored: list[dict] = []
+    # Cap good/bad samples per the original [:2] slicing logic; we only need
+    # a handful of recent examples to seed the prompt. Once both buckets are
+    # filled (5 each, generously), stop scanning older files.
+    target_per_bucket = 5
+    good: list[dict] = []
+    bad: list[dict] = []
     for d in (HISTORY_DIR, POST_HISTORY_DIR):
         if not d.exists():
             continue
         for f in sorted(d.iterdir(), reverse=True):
+            if len(good) >= target_per_bucket and len(bad) >= target_per_bucket:
+                break
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, ValueError):
@@ -191,13 +200,17 @@ def build_feedback_context(limit: int = 4) -> str:
                 continue
             text = str(data.get("reply_text") or data.get("post_text") or data.get("best_effort_post_text") or "")[:120]
             comment = str(fb.get("comment") or "").strip()
-            scored.append({"score": int(score), "text": text, "comment": comment})
+            entry = {"score": int(score), "text": text, "comment": comment}
+            if entry["score"] >= 4 and len(good) < target_per_bucket:
+                good.append(entry)
+            elif entry["score"] <= 2 and len(bad) < target_per_bucket:
+                bad.append(entry)
 
-    if not scored:
+    if not good and not bad:
         return ""
 
-    good = [s for s in scored if s["score"] >= 4][:2]
-    bad = [s for s in scored if s["score"] <= 2][:2]
+    good = good[:2]
+    bad = bad[:2]
 
     lines: list[str] = []
     if good:

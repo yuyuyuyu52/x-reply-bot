@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -14,6 +15,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from src.common import (
     BOT_LOCK_PATH,
@@ -46,6 +48,28 @@ logger = get_logger(__name__)
 ROOT = Path(__file__).resolve().parent
 # Re-export for backward compatibility with any code that previously imported LOCK_PATH from here.
 LOCK_PATH = BOT_LOCK_PATH
+
+# Asia/Shanghai is the canonical timezone for all daemon scheduling decisions.
+# All "now"/"today"/hour-window comparisons must anchor here, not the host TZ
+# (which can drift to UTC inside containers or systemd units).
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _beijing_now() -> datetime:
+    """Current time anchored to Asia/Shanghai (Beijing).
+
+    Use this instead of ``_beijing_now()`` for any scheduling or
+    today/hour-window decision — otherwise the daemon's behavior depends on
+    the host's local timezone, which silently breaks cron windows when run
+    in containers, on CI, or after a host TZ change.
+    """
+    return datetime.now(tz=BEIJING_TZ)
+
+
+# Set by SIGTERM/SIGHUP handler; checked from the main loop for clean shutdown.
+# Module-level so the signal handler (which can't easily capture closures) and
+# the loop can share state without globals-in-main wiring.
+_shutdown_requested = False
 
 
 def format_header(title: str) -> list[str]:
@@ -81,7 +105,24 @@ def read_tg_state() -> dict:
 
 
 def write_tg_state(state: dict) -> None:
-    write_json(TELEGRAM_STATE_PATH, state)
+    """Atomically persist Telegram update offset.
+
+    Uses a pid-scoped tmp file + os.replace so a daemon crash mid-write can't
+    leave TELEGRAM_STATE_PATH truncated (which would re-replay every old
+    update on next start).
+    """
+    tmp = TELEGRAM_STATE_PATH.with_suffix(TELEGRAM_STATE_PATH.suffix + f".tmp.{os.getpid()}")
+    try:
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, TELEGRAM_STATE_PATH)
+    finally:
+        # Best-effort cleanup if os.replace failed.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
 
 
 def next_scheduled_after(now: datetime) -> datetime:
@@ -256,7 +297,7 @@ def status_text(
     next_hotspot_at: datetime,
     active_label: str,
 ) -> str:
-    now = datetime.now().astimezone()
+    now = _beijing_now()
     lines = format_header("📊 Bot 状态")
     if run_proc and run_proc.poll() is None:
         lines.append(format_kv("⏳", "当前", f"正在执行 {active_label}"))
@@ -283,6 +324,10 @@ def count_scheduled_posts(date_str: str) -> int:
             item = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
+        # NOTE: telegram-triggered posts intentionally not counted toward
+        # daily limit (manual override). This is asymmetric with
+        # count_hotspot_posts_today which counts all triggers — do not
+        # "fix" by removing the trigger filter without owner sign-off.
         if item.get("date_beijing") == date_str and item.get("trigger") == "schedule":
             total += 1
     return total
@@ -298,7 +343,7 @@ def post_daily_limit() -> int:
 def post_summary(next_post_run_at: datetime) -> str:
     latest = load_json(LATEST_POST_RUN_PATH, {})
     queue = post_topic_summary()
-    today = datetime.now().astimezone().strftime("%Y-%m-%d")
+    today = _beijing_now().strftime("%Y-%m-%d")
     lines = format_header("📝 主动发帖状态")
     lines.extend(
         [
@@ -370,7 +415,7 @@ def revisit_counts() -> dict:
     failed = 0
     skipped = 0  # dry-runs / not-posted / no URL
     waiting = 0  # posted but <24h old
-    now = datetime.now().astimezone()
+    now = _beijing_now()
     for kind, directory in (("post", POST_HISTORY_DIR), ("reply", HISTORY_DIR)):
         for path in sorted(directory.glob("*.json")):
             try:
@@ -387,10 +432,23 @@ def revisit_counts() -> dict:
             if eng.get("failed"):
                 failed += 1
                 continue
-            try:
-                posted_at = datetime.strptime(rec.get("time_beijing", ""), "%Y-%m-%d %H:%M:%S CST").replace(tzinfo=timezone(timedelta(hours=8)))
-            except Exception:
-                posted_at = None
+            # time_beijing format: "YYYY-MM-DD HH:MM:SS <TZ>" where the
+            # trailing token has historically been "CST", "+0800", or even
+            # "Asia/Shanghai" depending on the writer. Strip the trailing
+            # tz token and apply Asia/Shanghai directly — all writers in this
+            # repo emit Beijing local time regardless of the suffix.
+            posted_at = None
+            time_str = (rec.get("time_beijing") or "").strip()
+            if time_str:
+                parts = time_str.split()
+                if len(parts) >= 2:
+                    date_part, time_part = parts[0], parts[1]
+                    try:
+                        posted_at = datetime.strptime(
+                            f"{date_part} {time_part}", "%Y-%m-%d %H:%M:%S"
+                        ).replace(tzinfo=BEIJING_TZ)
+                    except Exception:
+                        posted_at = None
             if posted_at and (now - posted_at) < timedelta(hours=24):
                 waiting += 1
             else:
@@ -434,7 +492,7 @@ def hotspot_summary(next_hotspot_at: datetime) -> str:
     from src.hotspot.store import hotspot_stats
     stats = hotspot_stats()
     latest = load_json(LATEST_HOTSPOT_RUN_PATH, {})
-    today = datetime.now().astimezone().strftime("%Y-%m-%d")
+    today = _beijing_now().strftime("%Y-%m-%d")
     lines = format_header("🔥 热点发现状态")
     lines.extend([
         format_kv("📊", "今日发现", stats["today_discovered"]),
@@ -725,7 +783,7 @@ def handle_command(
             return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
         try:
             evt = persona_add_event(body)
-            _safe_notify(f"✅ 已记录事件\n\n📅 {evt['timestamp']}\n📝 {evt['raw']}")
+            _safe_notify(f"✅ 已记录事件\n\n📅 {evt['time_beijing']}\n📝 {evt['raw']}")
         except Exception as exc:
             logger.warning(f"persona_add_event failed: {exc}")
             _safe_notify(f"❌ 记录失败：{exc}")
@@ -795,14 +853,23 @@ def poll_updates(
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     state = read_tg_state()
+    initial_offset = state.get("update_offset", 0)
     params = {
         "timeout": 1,
-        "offset": state.get("update_offset", 0),
+        "offset": initial_offset,
     }
     data = tg_api("getUpdates", params=params, timeout=5)
+    if not data.get("ok", True):
+        # Telegram returned an error (rate limit, bad token, etc.). Don't
+        # advance the offset and back off so we don't hammer the API into a
+        # harder 429.
+        description = data.get("description") or "(no description)"
+        logger.warning(f"telegram getUpdates not ok: {description}")
+        time.sleep(5)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
     results = data.get("result") or []
     allowed_chat = telegram_chat_id()
-    new_offset = state.get("update_offset", 0)
+    new_offset = initial_offset
     for item in results:
         update_id = int(item.get("update_id", 0))
         new_offset = max(new_offset, update_id + 1)
@@ -825,26 +892,49 @@ def poll_updates(
             )
         except Exception as exc:
             logger.warning(f"telegram update {update_id} handler error: {exc}")
-        finally:
-            if new_offset != state.get("update_offset", 0):
-                try:
-                    write_tg_state({"update_offset": new_offset})
-                    state["update_offset"] = new_offset
-                except Exception as exc:
-                    logger.warning(f"telegram offset persist failed: {exc}")
+    # Persist offset once after the whole batch — avoids the previous bug
+    # where every update triggered a fresh non-atomic file write, and any
+    # crash mid-loop could lose offset progress or replay updates.
+    if new_offset != initial_offset:
+        try:
+            write_tg_state({"update_offset": new_offset})
+        except Exception as exc:
+            logger.warning(f"telegram offset persist failed: {exc}")
     return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
 
 def main() -> int:
     load_env_file()
     ensure_state_dirs()
+
+    # Install signal handlers BEFORE acquiring the lock so a SIGTERM during
+    # startup also takes the clean-shutdown path. The handler just flips a
+    # flag — the main loop checks it on every tick and breaks out cleanly,
+    # so child subprocesses get terminated and the flock gets released.
+    # Slot-carry-over invariant: when the loop wakes after a long-running
+    # job finishes, any other slot whose due-time elapsed during the run
+    # is "carried over" (next-fire set to finished_at) instead of skipped.
+    # See the post-job block in the main loop. Keep this invariant when
+    # editing the loop — naïve recomputation will silently drop slots.
+    def _handle_shutdown(signum, _frame):
+        global _shutdown_requested
+        _shutdown_requested = True
+        logger.info(f"bot daemon got signal {signum}; requesting shutdown")
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, _handle_shutdown)
+        except (ValueError, OSError):
+            # Not a main thread or unsupported on this platform; ignore.
+            pass
+
     lock_fh = LOCK_PATH.open("w")
     try:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         logger.warning("bot daemon already running")
         return 0
-    now = datetime.now().astimezone()
+    now = _beijing_now()
     next_run_at = next_scheduled_after(now)
     next_post_run_at = next_proactive_after(now)
     next_learn_at = next_learning_after(now)
@@ -857,10 +947,13 @@ def main() -> int:
     try:
         logger.info("bot daemon started")
         while True:
-            now = datetime.now().astimezone()
+            if _shutdown_requested:
+                logger.info("bot daemon shutdown requested; exiting main loop")
+                break
+            now = _beijing_now()
 
             if run_proc and run_proc.poll() is not None:
-                finished_at = datetime.now().astimezone()
+                finished_at = _beijing_now()
                 carry_over_post_slot = (
                     not active_label.startswith("post_once.py")
                     and next_post_run_at <= finished_at
@@ -966,6 +1059,26 @@ def main() -> int:
 
             time.sleep(5)
     finally:
+        # Clean-shutdown: if a child job is still running (e.g. SIGTERM
+        # arrived while a Popen was alive), terminate it before we release
+        # the daemon lock. Otherwise the orphan keeps the job-level
+        # run_once.lock / post_once.lock and the next daemon start can't
+        # acquire it, even though no daemon is around to babysit it.
+        if run_proc is not None and run_proc.poll() is None:
+            logger.info(f"bot daemon stopping; terminating active child {active_label}")
+            try:
+                run_proc.terminate()
+                try:
+                    run_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"child {active_label} did not exit on SIGTERM; killing")
+                    run_proc.kill()
+                    try:
+                        run_proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"child {active_label} did not exit after SIGKILL")
+            except Exception as exc:
+                logger.warning(f"child terminate failed: {exc}")
         try:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         except Exception:

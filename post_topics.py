@@ -5,7 +5,16 @@ import argparse
 import json
 from datetime import datetime
 
-from src.common import ensure_state_dirs, load_env_file, load_post_topics, normalize_post_topic, save_post_topics, topic_summary_text
+from src.common import (
+    POST_TOPICS_LOCK_PATH,
+    blocking_lock,
+    ensure_state_dirs,
+    load_env_file,
+    load_post_topics,
+    normalize_post_topic,
+    save_post_topics,
+    topic_summary_text,
+)
 
 
 def main() -> int:
@@ -22,7 +31,6 @@ def main() -> int:
 
     load_env_file()
     ensure_state_dirs()
-    data = load_post_topics()
 
     has_structured = any(
         [
@@ -50,11 +58,19 @@ def main() -> int:
         )
         if not topic_summary_text(topic):
             raise SystemExit("Need at least one of --add/--subject/--context/--stance.")
-        data.setdefault("topics", []).append(topic)
-        save_post_topics(data)
+        # Serialize the append against any concurrent daemon mark_post_topic_status
+        # or Telegram-triggered /post_topics.py --add invocation.
+        with blocking_lock(POST_TOPICS_LOCK_PATH):
+            data = load_post_topics()
+            data.setdefault("topics", []).append(topic)
+            save_post_topics(data)
         print(json.dumps(topic, ensure_ascii=False, indent=2))
         return 0
 
+    # Read path doesn't strictly need the lock, but taking it briefly gives a
+    # consistent snapshot across a concurrent writer.
+    with blocking_lock(POST_TOPICS_LOCK_PATH):
+        data = load_post_topics()
     print(json.dumps(data, ensure_ascii=False, indent=2))
     return 0
 

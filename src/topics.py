@@ -5,7 +5,14 @@ Extracted from common.py to isolate topic queue concerns.
 """
 from __future__ import annotations
 
-from src.common import POST_TOPICS_PATH, VALID_POST_TOPIC_TYPES, load_json, write_json
+from src.common import (
+    POST_TOPICS_LOCK_PATH,
+    POST_TOPICS_PATH,
+    VALID_POST_TOPIC_TYPES,
+    blocking_lock,
+    load_json,
+    write_json,
+)
 
 
 def topic_summary_text(topic: dict) -> str:
@@ -68,17 +75,22 @@ def next_pending_post_topic() -> dict | None:
 
 
 def mark_post_topic_status(topic_id: str, status: str, extra: dict | None = None) -> dict:
-    data = load_post_topics()
-    updated = None
-    for item in data.get("topics", []):
-        if str(item.get("id") or "") != topic_id:
-            continue
-        item["status"] = status
-        if extra:
-            item.update(extra)
-        updated = item
-        break
-    save_post_topics(data)
+    # Use blocking_lock to serialize concurrent writers (e.g. daemon job
+    # marking a topic 'used' while a Telegram-triggered post_once or the
+    # post_topics.py CLI is appending). Plain blocking flock waits briefly
+    # — the critical section is microseconds, so contention never stalls.
+    with blocking_lock(POST_TOPICS_LOCK_PATH):
+        data = load_post_topics()
+        updated = None
+        for item in data.get("topics", []):
+            if str(item.get("id") or "") != topic_id:
+                continue
+            item["status"] = status
+            if extra:
+                item.update(extra)
+            updated = item
+            break
+        save_post_topics(data)
     return updated or {}
 
 

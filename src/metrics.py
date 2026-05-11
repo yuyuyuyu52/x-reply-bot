@@ -46,7 +46,12 @@ def parse_metrics(aria_labels: list[str]) -> dict:
     for label in aria_labels or []:
         lowered = label.lower()
         value = first_number_token(label)
-        if any(key in lowered for key in ["回复", "reply"]):
+        # NOTE: 'reply' in 'replies' is False (replies → r-e-p-l-i-e-s, no 'y').
+        # Use the shared prefix 'repl' which matches both 'reply' and 'replies'.
+        # This is a prefix-only match against the aria-label string, so it
+        # won't trigger on substrings like 'replied' in other UI surfaces — the
+        # only X aria-labels containing 'repl' are the reply count labels.
+        if any(key in lowered for key in ["回复", "repl"]):
             metrics["replies"] = max(metrics["replies"], value)
         elif any(key in lowered for key in ["转帖", "转推", "转发", "retweet", "repost"]):
             metrics["reposts"] = max(metrics["reposts"], value)

@@ -12,7 +12,19 @@
 set -euo pipefail
 
 # scripts/_common.sh lives one level below the repo root.
-__bot_common_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks so callers invoked through a symlinked entry point
+# (e.g. /usr/local/bin/start_bot.sh -> .../scripts/start_bot.sh) still
+# get the real repo root, not the symlink's parent directory.
+__bot_common_src="${BASH_SOURCE[0]}"
+while [ -L "$__bot_common_src" ]; do
+  __bot_common_link="$(readlink "$__bot_common_src")"
+  # Relative symlinks resolve against the link's own directory.
+  case "$__bot_common_link" in
+    /*) __bot_common_src="$__bot_common_link" ;;
+    *) __bot_common_src="$(cd "$(dirname "$__bot_common_src")" && pwd)/$__bot_common_link" ;;
+  esac
+done
+__bot_common_dir="$(cd "$(dirname "$__bot_common_src")" && pwd)"
 X_REPLY_ROOT="$(cd "${__bot_common_dir}/.." && pwd)"
 export X_REPLY_ROOT
 

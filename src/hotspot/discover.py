@@ -2,6 +2,7 @@
 """Hotspot discovery: fetch from 10+ external sources, LLM filter, score."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import textwrap
@@ -71,6 +72,8 @@ UA_REDDIT = "python:x-reply-bot:v1.0 (by /u/indiedev)"
 
 def _http_get(url: str, timeout: int = 15, retries: int = 3, ua: str | None = None) -> bytes:
     headers = {"User-Agent": ua or UA_GENERIC}
+    if retries < 1:
+        retries = 1
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, headers=headers)
@@ -81,6 +84,7 @@ def _http_get(url: str, timeout: int = 15, retries: int = 3, ua: str | None = No
                 time.sleep(1)
             else:
                 raise
+    return None  # unreachable, kept for clarity
 
 
 def _http_get_json(url: str, timeout: int = 15, ua: str | None = None) -> dict | list:
@@ -95,6 +99,9 @@ def _http_get_json(url: str, timeout: int = 15, ua: str | None = None) -> dict |
 def fetch_hn_top_stories(limit: int = HN_MAX_FETCH) -> list[dict]:
     logger.info("hn: requesting top stories")
     ids = _http_get_json(HN_TOP_STORIES_URL)
+    if not isinstance(ids, list):
+        logger.warning("hn: topstories returned non-list: %r", ids)
+        return []
     stories: list[dict] = []
     for sid in ids[:limit]:
         try:
@@ -126,6 +133,15 @@ def fetch_reddit_hot(subreddit: str, limit: int = 25) -> list[dict]:
     else:
         logger.info("reddit: r/%s unavailable (needs OAuth)", subreddit)
         return []
+    if not isinstance(data, dict):
+        logger.warning("reddit: r/%s returned non-dict: %r", subreddit, data)
+        return []
+    if data.get("message") == "Too Many Requests" or data.get("error"):
+        logger.warning(
+            "reddit: r/%s rate-limited / error: %s",
+            subreddit, data.get("message") or data.get("error"),
+        )
+        return []
     posts = []
     for child in (data.get("data") or {}).get("children") or []:
         d = (child.get("data") or {})
@@ -146,6 +162,9 @@ def fetch_reddit_hot(subreddit: str, limit: int = 25) -> list[dict]:
 
 def fetch_lobsters(limit: int = 25) -> list[dict]:
     data = _http_get_json(LOBSTERS_HOTTEST_URL, timeout=15)
+    if not isinstance(data, list):
+        logger.warning("lobsters: returned non-list: %r", data)
+        return []
     posts = []
     for item in data[:limit]:
         title = item.get("title", "")
@@ -181,8 +200,12 @@ def fetch_simonw_blog(limit: int = 10) -> list[dict]:
         url = link_m.group(1) if link_m else ""
         if not url:
             continue
+        if url:
+            entry_id = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+        else:
+            entry_id = hashlib.sha1(title.encode("utf-8")).hexdigest()[:12]
         posts.append({
-            "id": url.split("/")[-2] or url.split("/")[-1] or title[:20],
+            "id": entry_id,
             "title": title,
             "url": url,
             "score": 0,
@@ -230,6 +253,9 @@ def fetch_hf_papers(limit: int = 10) -> list[dict]:
         data = _http_get_json(HF_PAPERS_URL, timeout=15)
     except Exception as exc:
         logger.warning("hf_papers: fetch failed: %s", exc)
+        return []
+    if not isinstance(data, list):
+        logger.warning("hf_papers: returned non-list: %r", data)
         return []
     posts = []
     for paper in data[:limit]:
@@ -289,6 +315,9 @@ def _fetch_company_via_hn_search(company: str, label: str, limit: int = 10) -> l
     })
     url = f"{HN_ALGOLIA_URL}?{params}"
     data = _http_get_json(url, timeout=15)
+    if not isinstance(data, dict):
+        logger.warning("hn_algolia: returned non-dict for %s: %r", company, data)
+        return []
     posts = []
     for hit in (data.get("hits") or [])[:limit]:
         title = hit.get("title", "")
@@ -329,8 +358,12 @@ def _fetch_company_blog_rss(url: str, label: str, limit: int = 10) -> list[dict]
         link = (link_m.group(1) if link_m else "").strip()
         if not title or not link:
             continue
+        if link:
+            entry_id = hashlib.sha1(link.encode("utf-8")).hexdigest()[:12]
+        else:
+            entry_id = hashlib.sha1(title.encode("utf-8")).hexdigest()[:12]
         posts.append({
-            "id": link.split("/")[-2] or link.split("/")[-1] or title[:20],
+            "id": entry_id,
             "title": f"[{label}] {title}",
             "url": link,
             "score": 0,
@@ -474,12 +507,20 @@ def filter_hotspot(story: dict) -> dict:
         max_tokens=300,
     )
     payload = response["payload"]
+    relevant = bool(payload.get("relevant"))
+    cn_summary = str(payload.get("cn_summary") or "").strip()
+    if relevant and not cn_summary:
+        logger.warning(
+            "filter_hotspot: relevant=true but empty cn_summary, treating as filtered_out (title=%.40s)",
+            (story.get("title") or "")[:40],
+        )
+        relevant = False
     return {
-        "relevant": bool(payload.get("relevant")),
+        "relevant": relevant,
         "score": int(payload.get("score") or 0),
         "reason": str(payload.get("reason") or "").strip(),
         "angle": str(payload.get("angle") or "").strip(),
-        "cn_summary": str(payload.get("cn_summary") or "").strip(),
+        "cn_summary": cn_summary,
         "cost": response.get("cost", {}),
         "usage": response.get("usage", {}),
     }

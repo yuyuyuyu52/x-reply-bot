@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -187,23 +188,54 @@ def search_image(query: str) -> dict | None:
 
 def download_image(url: str) -> tuple[str, str] | None:
     """Download image to a temp file. Returns (file_path, mime_type) or None."""
+    # Reject non-HTTP(S) URLs strictly: urllib.request handles file://, ftp://,
+    # etc., which would let a poisoned upstream response exfiltrate local files
+    # or hit internal services. No scheme inference, no normalization.
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        logger.warning("download refused: unsupported url scheme url=%s", url)
+        return None
+
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "x-reply-bot/1.0"})
+        # 30s overall timeout is acceptable here because we also bound the
+        # response body via Content-Length pre-check + bounded read below, so a
+        # slow-loris peer cannot exhaust memory — only one socket for <=30s.
         with urllib.request.urlopen(req, timeout=30) as resp:
             content_type = resp.headers.get("Content-Type", "")
-            data = resp.read()
+            try:
+                declared_len = int(resp.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                declared_len = 0
+            if declared_len > MAX_IMAGE_BYTES:
+                logger.warning(
+                    "image too large (Content-Length=%d) url=%s", declared_len, url
+                )
+                return None
+            # Bounded read: pull at most MAX_IMAGE_BYTES + 1 bytes so we can
+            # detect responses that omitted Content-Length but are still
+            # oversized. Anything beyond the cap is treated as a rejection.
+            data = resp.read(MAX_IMAGE_BYTES + 1)
     except Exception as exc:
         logger.warning("download failed url=%s: %s", url, exc)
         return None
 
     if len(data) > MAX_IMAGE_BYTES:
-        logger.warning("image too large: %d bytes", len(data))
+        logger.warning("image too large (truncated read): %d bytes", len(data))
         return None
 
     mime = content_type.split(";")[0].strip() or "image/gif"
+    if not mime.startswith("image/"):
+        logger.warning("download refused: non-image Content-Type=%s url=%s", mime, url)
+        return None
+
     ext = mimetypes.guess_extension(mime) or ".gif"
-    path = TEMP_DIR / f"img_{os.getpid()}_{hash(url) & 0x7FFFFFFF}{ext}"
+    # sha1(url) is deterministic across processes (unlike hash(), which is
+    # randomized via PYTHONHASHSEED) and collision-resistant for our purposes —
+    # this avoids cross-process path divergence and intra-process races on
+    # short hash collisions.
+    digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+    path = TEMP_DIR / f"img_{os.getpid()}_{digest}{ext}"
     path.write_bytes(data)
     return str(path), mime
 

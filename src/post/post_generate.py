@@ -19,6 +19,55 @@ from src.common import (
 from src.image_search import image_search_available
 from src.learning_store import recent_learning_references
 from src.context_builder import build_feedback_context, build_learning_context, build_persona_context, persona_context_dict
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+def cjk_weight(s: str) -> int:
+    """X-style character weight: CJK chars count as 2, others as 1.
+
+    X's tweet-length limit is based on weighted character count; CJK
+    (Chinese / Japanese / Korean) characters count double. A 280-char
+    pure-CJK string therefore weighs 560 and the tweetButton stays
+    disabled. This mirrors how X computes ``tweetTextarea_0`` length.
+    """
+    total = 0
+    for ch in s:
+        cp = ord(ch)
+        if (
+            0x4E00 <= cp <= 0x9FFF  # CJK Unified Ideographs (一-鿿)
+            or 0x3040 <= cp <= 0x30FF  # Hiragana + Katakana (぀-ヿ)
+            or 0xAC00 <= cp <= 0xD7AF  # Hangul Syllables (가-힯)
+        ):
+            total += 2
+        else:
+            total += 1
+    return total
+
+
+def truncate_to_weight(s: str, max_weight: int) -> str:
+    """Truncate ``s`` so its X-style weight does not exceed ``max_weight``.
+
+    Returns the prefix; caller is responsible for logging the truncation.
+    """
+    total = 0
+    out: list[str] = []
+    for ch in s:
+        cp = ord(ch)
+        if (
+            0x4E00 <= cp <= 0x9FFF
+            or 0x3040 <= cp <= 0x30FF
+            or 0xAC00 <= cp <= 0xD7AF
+        ):
+            w = 2
+        else:
+            w = 1
+        if total + w > max_weight:
+            break
+        out.append(ch)
+        total += w
+    return "".join(out)
 
 CANDIDATE_PROMPT = """你在为一个真实的 X 账号写主动发帖。
 
@@ -196,7 +245,12 @@ THREAD_REWRITE_PROMPT = """你在重写一条帖串，根据审稿意见改进�
 
 
 def normalize_thread_segments(segments: list[dict]) -> list[dict]:
-    """Validate and normalize thread segments from LLM output."""
+    """Validate and normalize thread segments from LLM output.
+
+    Truncates by X's weighted-character count (CJK weighs 2) rather than
+    Python ``len()`` — otherwise a 280 CJK-char segment weighs 560 and the
+    tweetButton stays disabled, silently breaking the post.
+    """
     if not segments or len(segments) < THREAD_MIN_SEGMENTS:
         raise RuntimeError(f"Thread needs at least {THREAD_MIN_SEGMENTS} segments, got {len(segments) if segments else 0}")
     normalized = []
@@ -204,8 +258,18 @@ def normalize_thread_segments(segments: list[dict]) -> list[dict]:
         text = str((item or {}).get("text") or "").strip()
         if not text:
             raise RuntimeError(f"Segment {idx} has empty text")
-        if len(text) > THREAD_MAX_SEGMENT_CHARS:
-            text = text[:THREAD_MAX_SEGMENT_CHARS]
+        weight = cjk_weight(text)
+        if weight > THREAD_MAX_SEGMENT_CHARS:
+            truncated = truncate_to_weight(text, THREAD_MAX_SEGMENT_CHARS)
+            logger.warning(
+                "thread segment %d truncated by X weight: %d -> %d (chars %d -> %d)",
+                idx,
+                weight,
+                cjk_weight(truncated),
+                len(text),
+                len(truncated),
+            )
+            text = truncated
         normalized.append({
             "index": idx,
             "text": text,
@@ -426,16 +490,32 @@ ARTICLE_REWRITE_PROMPT = """你在重写一篇 X 文章，根据审稿意见改�
 
 
 def normalize_article(title: str, body: str) -> dict:
-    """Validate article title and body from LLM output."""
+    """Validate article title and body from LLM output.
+
+    Title length is truncated by X's weighted-character count (CJK = 2)
+    so the title input never silently rejects. Body is truncated by raw
+    char count (X articles don't enforce the tweet weight limit, but we
+    cap to keep notification payloads reasonable).
+    """
     title = title.strip()
     body = body.strip()
     if not title:
         raise RuntimeError("Article title is empty")
     if not body:
         raise RuntimeError("Article body is empty")
-    if len(title) > 80:
-        title = title[:80]
+    title_weight = cjk_weight(title)
+    if title_weight > 80:
+        truncated_title = truncate_to_weight(title, 80)
+        logger.warning(
+            "article title truncated by X weight: %d -> %d (chars %d -> %d)",
+            title_weight,
+            cjk_weight(truncated_title),
+            len(title),
+            len(truncated_title),
+        )
+        title = truncated_title
     if len(body) > 1500:
+        logger.warning("article body truncated: %d -> 1500 chars", len(body))
         body = body[:1500]
     return {"title": title, "body": body}
 

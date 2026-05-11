@@ -49,6 +49,7 @@ OBSERVE_LOCK_PATH = STATE_DIR / "observe_feed.lock"
 REVISIT_LOCK_PATH = STATE_DIR / "revisit.lock"
 HOTSPOT_LOCK_PATH = STATE_DIR / "hotspot_discover.lock"
 PERSONA_LOCK_PATH = STATE_DIR / "persona.lock"
+POST_TOPICS_LOCK_PATH = STATE_DIR / "post_topics.lock"
 FOLLOW_TODAY_PATH = STATE_DIR / "follow_today.json"
 LOG_DIR = STATE_DIR / "logs"
 ENV_PATH = ROOT / ".env"
@@ -182,16 +183,23 @@ def post_history_path_for(timestamp_label: str) -> Path:
 
 
 def looks_supported_language(text: str) -> bool:
-    """Check whether text is primarily Chinese/English (shared filter)."""
+    """Check whether text is primarily Chinese/English (shared filter).
+
+    Digits count as supported content (treated as Latin-adjacent) so that
+    legitimate numeric/financial posts like ``"$500 \u2192 $1200"`` or
+    ``"GDP -2.3%"`` aren't filtered out \u2014 historically those had
+    ``meaningful == 0`` and returned False.
+    """
     if not text:
         return False
     han = len(re.findall(r"[\u4e00-\u9fff]", text))
     latin = len(re.findall(r"[A-Za-z]", text))
+    digits = len(re.findall(r"\d", text))
     other_letters = len(re.findall(r"[\u0400-\u04ff\u0600-\u06ff\u0900-\u0d7f\u3040-\u30ff\uac00-\ud7af]", text))
-    meaningful = han + latin + other_letters
+    meaningful = han + latin + other_letters + digits
     if meaningful == 0:
         return False
-    return (han + latin) / meaningful >= 0.8
+    return (han + latin + digits) / meaningful >= 0.8
 
 
 def normalize_status_url(url: str) -> str:
@@ -227,10 +235,23 @@ def count_daily_reposts(date_str: str) -> int:
     return total
 
 
+def _open_lock_fd(path: Path):
+    """Open ``path`` for flock without truncating it.
+
+    Using ``path.open("w")`` truncates the file *before* the lock is
+    acquired, so a second waiter clobbers the holder's file contents.
+    ``os.open`` with ``O_RDWR | O_CREAT`` (no ``O_TRUNC``) preserves any
+    bytes already written by the lock-holder, while still letting callers
+    write to the yielded handle if they want to record metadata.
+    """
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o644)
+    return os.fdopen(fd, "r+", encoding="utf-8")
+
+
 @contextmanager
 def exclusive_lock(path: Path):
     """Context manager for flock-based exclusive locking."""
-    fh = path.open("w")
+    fh = _open_lock_fd(path)
     try:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield fh
@@ -245,6 +266,27 @@ def exclusive_lock(path: Path):
         fh.close()
         raise
     else:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        fh.close()
+
+
+@contextmanager
+def blocking_lock(path: Path):
+    """Blocking flock variant — used for short read-modify-write JSON queues
+    where we want to wait briefly instead of crashing on contention.
+
+    Unlike ``exclusive_lock`` (LOCK_EX | LOCK_NB), this uses plain LOCK_EX
+    so concurrent callers serialize naturally. Suitable for queues like
+    ``post_topics.json`` where the critical section is microseconds.
+    """
+    fh = _open_lock_fd(path)
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        yield fh
+    finally:
         try:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         except Exception:

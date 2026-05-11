@@ -117,7 +117,7 @@ def main() -> int:
 
         logger.info("run_once step=generate")
         gen = run([sys.executable, str(ROOT / "src/reply/generate_reply.py")])
-        sys.stdout.write(gen.stderr)
+        sys.stderr.write(gen.stderr)
         if gen.returncode != 0:
             logger.error("run_once generate failed exit=%d", gen.returncode)
             sys.stdout.write(gen.stdout)
@@ -136,9 +136,26 @@ def main() -> int:
 
         selected_url = str(selected.get("url") or "").strip()
         selected_selection_id = str(selected.get("selection_id") or "").strip()
-        if reply_source_url != selected_url or reply_selection_id != selected_selection_id:
+        if (
+            reply_source_url != selected_url
+            or reply_selection_id != selected_selection_id
+            or not reply_selection_id
+            or not selected_selection_id
+        ):
             logger.error("run_once mismatch action=%s selected_url=%s reply_url=%s selected_id=%s reply_id=%s",
                          action, selected_url, reply_source_url, selected_selection_id, reply_selection_id)
+            append_log(
+                {
+                    "time": started.isoformat(),
+                    "status": "stale_state",
+                    "trigger": args.trigger,
+                    "reason": "reply_selection_mismatch",
+                    "selected_url": selected_url,
+                    "reply_source_url": reply_source_url,
+                    "selected_selection_id": selected_selection_id,
+                    "reply_selection_id": reply_selection_id,
+                }
+            )
             print(
                 json.dumps(
                     {

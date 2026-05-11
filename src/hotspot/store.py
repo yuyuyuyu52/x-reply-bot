@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.common import HOTSPOT_STORE_PATH
+
+
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _now_beijing() -> datetime:
+    return datetime.now(tz=BEIJING_TZ)
 
 
 SCHEMA = [
@@ -41,13 +49,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def _get_conn():
     db = HOTSPOT_STORE_PATH
     db.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    _ensure_schema(conn)
-    try:
+    with closing(sqlite3.connect(str(db), timeout=10)) as conn:
+        conn.row_factory = sqlite3.Row
+        _ensure_schema(conn)
         yield conn
-    finally:
-        conn.close()
 
 
 def is_seen(source: str, hotspot_id: str) -> bool:
@@ -69,7 +74,7 @@ def insert_hotspot(
     cn_summary: str = "",
 ) -> None:
     with _get_conn() as conn:
-        now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+        now = _now_beijing().strftime("%Y-%m-%d %H:%M:%S %Z")
         conn.execute(
             """\
 INSERT OR IGNORE INTO hotspots
@@ -105,7 +110,7 @@ def mark_added_to_queue(source: str, hotspot_id: str) -> None:
 
 def recent_hotspots(days: int = 1, limit: int = 20) -> list[dict]:
     with _get_conn() as conn:
-        cutoff = (datetime.now().astimezone() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cutoff = (_now_beijing() - timedelta(days=days)).strftime("%Y-%m-%d")
         rows = conn.execute(
             """\
 SELECT id, source, title, url, hn_score, hn_descendants,
@@ -139,7 +144,7 @@ LIMIT ?
 
 def hotspot_stats() -> dict:
     with _get_conn() as conn:
-        today = datetime.now().astimezone().strftime("%Y-%m-%d")
+        today = _now_beijing().strftime("%Y-%m-%d")
         total = conn.execute("SELECT COUNT(*) FROM hotspots").fetchone()[0]
         added = conn.execute(
             "SELECT COUNT(*) FROM hotspots WHERE added_to_queue = 1"

@@ -400,6 +400,28 @@ def _increment_follow_count() -> None:
     except Exception:
         pass
 
+
+def _decrement_follow_count() -> None:
+    """Roll back an optimistic increment when the follow didn't actually happen.
+
+    Symmetric to ``_increment_follow_count``: only adjusts today's counter,
+    clamps at 0, and swallows IO errors (the counter is best-effort).
+    """
+    today = datetime.now().astimezone().strftime("%Y-%m-%d")
+    try:
+        try:
+            data = json.loads(FOLLOW_TODAY_PATH.read_text())
+        except Exception:
+            data = {}
+        # If the date doesn't match today, there's nothing meaningful to roll
+        # back (the counter belongs to a different day). Bail out.
+        if data.get("date") != today:
+            return
+        data["count"] = max(0, int(data.get("count", 0)) - 1)
+        FOLLOW_TODAY_PATH.write_text(json.dumps(data))
+    except Exception:
+        pass
+
 def auto_follow_user(handle: str) -> dict:
     if not handle:
         return {"ok": False, "reason": "empty_handle"}
@@ -445,13 +467,24 @@ print(json.dumps({{
     'reason': followed.get('reason', '')
 }}, ensure_ascii=False, indent=2))
 '''
+    # Optimistic increment: bump the counter BEFORE the click so a mid-flight
+    # crash (network blip after click but before result returns) can't lead to
+    # silently exceeding the 5/day cap on the next attempt. If the JS later
+    # reports that no follow actually happened, roll back.
+    _increment_follow_count()
     try:
         stdout = run_harness(textwrap.dedent(code))
         result = json.loads(stdout)
-        if result.get("action") == "followed":
-            _increment_follow_count()
+        action = result.get("action")
+        if action != "followed":
+            # 'already_following', 'button_not_found', or empty action → the
+            # follow didn't take effect; roll back the optimistic increment.
+            _decrement_follow_count()
         return result
     except Exception as exc:
+        # We may or may not have followed (the click may have landed before the
+        # error). Leave the counter incremented — conservative, prevents
+        # overshooting the daily cap.
         return {"ok": False, "handle": handle, "reason": "exception", "error": str(exc)}
 
 

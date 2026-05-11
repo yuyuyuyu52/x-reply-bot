@@ -10,6 +10,7 @@ mkdir -p state/logs
 exec 9>"state/bot.lock"
 
 if ! flock -n 9; then
+  echo "[$(date -Iseconds)] bot_loop: another instance running, skipping" >&2
   exit 0
 fi
 

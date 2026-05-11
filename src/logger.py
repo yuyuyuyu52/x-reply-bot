@@ -13,9 +13,30 @@ from logging.handlers import TimedRotatingFileHandler
 
 from src.common import LOG_DIR
 
-LOG_PATH = LOG_DIR / "x-reply-bot.log"
+# Per-PID log file path: each process writes to its own file so daemon +
+# subprocess children don't race on midnight rotation (TimedRotatingFileHandler
+# renames the underlying file, which can leave a sibling process with a stale
+# closed fd → ``ValueError: I/O operation on closed file``).
+LOG_PATH = LOG_DIR / f"x-reply-bot.{os.getpid()}.log"
+LOG_CURRENT_SYMLINK = LOG_DIR / "x-reply-bot.current.log"
 
 _initialized = False
+
+
+def _update_current_symlink() -> None:
+    """Best-effort: point ``x-reply-bot.current.log`` at this process's log
+    so users have a stable path to ``tail -F``. Errors are ignored
+    (filesystem doesn't support symlinks, racing process, etc.)."""
+    try:
+        target = LOG_PATH.name  # relative; both files live in LOG_DIR
+        if LOG_CURRENT_SYMLINK.is_symlink() or LOG_CURRENT_SYMLINK.exists():
+            try:
+                LOG_CURRENT_SYMLINK.unlink()
+            except Exception:
+                return
+        os.symlink(target, LOG_CURRENT_SYMLINK)
+    except Exception:
+        pass
 
 
 def init_logging(*, debug: bool = False) -> None:
@@ -25,11 +46,13 @@ def init_logging(*, debug: bool = False) -> None:
     _initialized = True
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _update_current_symlink()
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
-    # File handler — everything
+    # File handler — everything. Per-PID path makes midnight rotation a
+    # per-process operation, so no cross-process fd race.
     file_handler = TimedRotatingFileHandler(
         str(LOG_PATH),
         when="midnight",

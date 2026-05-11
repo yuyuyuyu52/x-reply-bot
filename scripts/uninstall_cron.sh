@@ -18,5 +18,9 @@ filtered="$(
   '
 )"
 
-printf '%s\n' "$filtered" | crontab -
+if [[ -n "$filtered" ]]; then
+  printf '%s\n' "$filtered" | crontab -
+else
+  crontab -r 2>/dev/null || true
+fi
 echo "Removed x-reply-bot cron schedule."

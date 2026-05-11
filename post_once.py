@@ -109,15 +109,21 @@ def _handle_article(topic: dict, plan: dict, args, started: datetime, stamp: str
     sys.stdout.write(send.stdout)
     sys.stderr.write(send.stderr)
 
-    # Parse output
+    # Parse output. article_send.py emits a JSON object with ``ok`` and
+    # ``sent_ok`` (set together; ``ok`` is the publish-success flag based
+    # on whether the page URL redirected to /status/). ``url`` is that
+    # final URL. Old code did ``ok = bool(url)`` which is fine for
+    # articles in steady state but conflates "send confirmed" with
+    # "URL parsed" — for robustness use the explicit ok flag and
+    # distinguish URL-unresolved from a genuine send failure.
     send_payload = {}
-    article_url = ""
-    if send.returncode == 0 and send.stdout.strip():
+    if send.stdout.strip():
         try:
             send_payload = parse_json_object(send.stdout)
-            article_url = str(send_payload.get("url") or "").strip()
         except Exception as exc:
             logger.warning("article_send parse error: %s", exc)
+    sent_ok = bool(send_payload.get("ok") or send_payload.get("sent_ok"))
+    article_url = str(send_payload.get("url") or "").strip()
 
     # Parse image cost
     image_cost_cny = 0.0
@@ -133,11 +139,19 @@ def _handle_article(topic: dict, plan: dict, args, started: datetime, stamp: str
     record = _build_article_record(topic, plan, args, started)
     record["image_info"] = image_info
     record["post_url"] = article_url
-    record["status"] = "article_posted" if send.returncode == 0 and article_url else "article_send_failed"
+    if sent_ok:
+        record["status"] = "article_posted" if article_url else "article_sent_url_unresolved"
+        if not article_url:
+            logger.warning("article send confirmed but URL unresolved; not retrying")
+    else:
+        record["status"] = "article_send_failed"
     record["total_cost_cny"] = round(float(record["total_cost_cny"]) + image_cost_cny, 8)
     record["send_returncode"] = send.returncode
 
-    if send.returncode == 0 and article_url:
+    # Mark topic used whenever the send was confirmed, even if URL is
+    # unresolved — the post already landed; leaving the topic ``pending``
+    # would cause a follow-up run to re-post the same article.
+    if sent_ok:
         if topic.get("source") != "auto":
             mark_post_topic_status(
                 str(topic.get("id") or ""),
@@ -150,7 +164,7 @@ def _handle_article(topic: dict, plan: dict, args, started: datetime, stamp: str
     write_json(post_history_path_for(stamp), record)
     notify_telegram(record, stamp)
     print(json.dumps(record, ensure_ascii=False, indent=2))
-    return 0 if send.returncode == 0 and article_url else 1
+    return 0 if sent_ok else 1
 
 
 def _build_article_record(topic: dict, plan: dict, args, started: datetime) -> dict:
@@ -279,10 +293,11 @@ def _handle_thread(topic: dict, plan: dict, args, started: datetime, stamp: str,
     segment_results = []
     last_url = ""
     all_ok = True
+    any_url_unresolved = False
 
     for i, seg in enumerate(segments):
         seg_text = seg["text"]
-        ok = False
+        sent_ok = False
         url = ""
 
         for attempt in range(3):
@@ -291,14 +306,18 @@ def _handle_thread(topic: dict, plan: dict, args, started: datetime, stamp: str,
                     sys.executable, str(ROOT / "src/post/post_send.py"),
                     "--text", seg_text,
                 ])
-                if send.returncode == 0:
-                    send_payload = {}
+                send_payload = {}
+                if send.returncode == 0 and send.stdout.strip():
                     try:
                         send_payload = parse_json_object(send.stdout)
                     except Exception:
                         pass
-                    url = str(send_payload.get("url") or "").strip()
-                    ok = bool(url)
+                # post_send.py's JSON contract: ``ok`` reflects the DOM
+                # marker (``你的帖子已发送``). ``url`` is best-effort from a
+                # profile-timeline lookup and can be empty even when send
+                # succeeded. Old code keyed retries off URL → double-posts.
+                sent_ok = bool(send_payload.get("ok") or send_payload.get("sent_ok"))
+                url = str(send_payload.get("url") or "").strip()
             else:
                 send = run([
                     sys.executable, str(ROOT / "src/reply/send_reply.py"),
@@ -308,33 +327,61 @@ def _handle_thread(topic: dict, plan: dict, args, started: datetime, stamp: str,
                     "--max-len", "280",
                     "--return-reply-url",
                 ])
-                if send.returncode == 0:
+                # send_reply returns 0 only when its inner ok=true marker
+                # fired, so returncode is a reliable send-success flag here.
+                sent_ok = send.returncode == 0
+                if sent_ok:
                     for line in (send.stdout or "").splitlines():
                         if line.startswith("REPLY_URL: "):
                             url = line[len("REPLY_URL: "):].strip()
-                    ok = bool(url)
 
-            if ok:
+            if sent_ok:
                 break
-            logger.warning("thread segment %d attempt %d failed", i, attempt + 1)
+            logger.warning("thread segment %d attempt %d failed (returncode=%s)", i, attempt + 1, send.returncode)
             time.sleep(3)
 
-        if not ok:
+        if not sent_ok:
             all_ok = False
             logger.error("thread segment %d failed after 3 attempts, aborting remaining", i)
             break
 
+        # Send confirmed. URL may still be empty if the profile-timeline
+        # lookup missed — log + record but DO NOT retry (post already
+        # landed; another attempt would duplicate). For segments 2+ we
+        # also need ``last_url`` to chain replies — if it's missing on a
+        # mid-thread segment, we can't continue.
+        if not url:
+            any_url_unresolved = True
+            logger.warning(
+                "thread segment %d sent but URL unresolved (post already landed; not retrying)",
+                i,
+            )
+            if i < len(segments) - 1:
+                logger.error(
+                    "thread segment %d URL missing — cannot chain remaining segments, aborting",
+                    i,
+                )
+                segment_results.append({"index": i, "url": "", "text": seg_text, "url_unresolved": True})
+                all_ok = False
+                break
+
         last_url = url
         segment_urls.append(url)
-        segment_results.append({"index": i, "url": url, "text": seg_text})
+        segment_results.append({"index": i, "url": url, "text": seg_text, "url_unresolved": not bool(url)})
 
     record = _build_thread_record(topic, plan, args, started)
     record["thread_segments"] = segment_results
     record["thread_segment_urls"] = segment_urls
-    record["status"] = "thread_posted" if all_ok else "thread_partial"
+    if all_ok:
+        record["status"] = "thread_posted_url_unresolved" if any_url_unresolved else "thread_posted"
+    else:
+        record["status"] = "thread_partial"
     record["post_url"] = segment_urls[0] if segment_urls else ""
 
     if all_ok:
+        # Mark topic used even when URL is unresolved — the post landed,
+        # so we must NOT leave the topic pending or a follow-up run will
+        # re-post the same content.
         if topic.get("source") != "auto":
             mark_post_topic_status(
                 str(topic.get("id") or ""),

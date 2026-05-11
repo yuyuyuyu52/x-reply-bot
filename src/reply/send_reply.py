@@ -69,16 +69,16 @@ def main() -> int:
     if do_like:
         like_block = """
     like_result = js('''
-(() => {{
+(() => {
   const btn = document.querySelector('[data-testid="like"]');
-  if (!btn) return {{ok:false, reason:'no like button'}};
+  if (!btn) return {ok:false, reason:'no like button'};
   const label = (btn.getAttribute('aria-label') || '');
-  if (label.includes('取消喜欢') || label.includes('Unlike') || btn.getAttribute('aria-pressed') === 'true') {{
-    return {{ok:true, action:'already_liked'}};
-  }}
+  if (label.includes('取消喜欢') || label.includes('Unlike') || btn.getAttribute('aria-pressed') === 'true') {
+    return {ok:true, action:'already_liked'};
+  }
   btn.click();
-  return {{ok:true, action:'liked'}};
-}})()
+  return {ok:true, action:'liked'};
+})()
 ''')
 """
     else:
@@ -196,11 +196,11 @@ else:
       .map((href) => href.replace(/\\/analytics$/, ''))
       .filter((href) => /\\/status\\/\\d+$/.test(href));
   }}
-  if (articles.length) {{
+  if (articles.length && (articles[0].innerText || '').includes(snippet)) {{
     const links = getLinks(articles[0]);
     if (links.length) {{ links.sort((a, b) => a.length - b.length); return links[0]; }}
   }}
-  for (const article of articles.slice(0, 5)) {{
+  for (const article of articles.slice(0, 10)) {{
     if ((article.innerText || '').includes(snippet)) {{
       const links = getLinks(article);
       if (links.length) {{ links.sort((a, b) => a.length - b.length); return links[0]; }}
@@ -222,11 +222,11 @@ else:
       .map((href) => href.replace(/\\/analytics$/, ''))
       .filter((href) => /\\/status\\/\\d+$/.test(href));
   }}
-  if (articles.length) {{
+  if (articles.length && (articles[0].innerText || '').includes(snippet)) {{
     const links = getLinks(articles[0]);
     if (links.length) {{ links.sort((a, b) => a.length - b.length); return links[0]; }}
   }}
-  for (const article of articles.slice(0, 5)) {{
+  for (const article of articles.slice(0, 10)) {{
     if ((article.innerText || '').includes(snippet)) {{
       const links = getLinks(article);
       if (links.length) {{ links.sort((a, b) => a.length - b.length); return links[0]; }}

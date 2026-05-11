@@ -72,7 +72,7 @@ Almost everything imports from `common.py`:
 - **Cost accounting**: `estimate_cost` knows pricing for `qwen3.5-flash` (tiered by prompt token count) and the `MiniMax-M2.x` family. Unknown models cost 0. Every record persisted to history includes `total_cost_cny`; the daily report aggregates from `state/history/`.
 - **Browser harness**: `run_harness(code, timeout)` writes Python to `browser-harness` over stdin and retries up to 3 times on transport errors, calling `restart_harness_daemon` between attempts. The harness exposes globals like `goto`, `js`, `click`, `type_text`, `screenshot`, `page_info`, `list_tabs`, `new_tab`, `switch_tab`, `wait_for_load` — these are not Python imports, they're injected into the harness exec context. CDP endpoint is auto-resolved by trying `X_REPLY_CDP_URL` → `127.0.0.1:9222` → `10.0.0.175:9223`.
 - **Telegram**: `telegram_notify` / `telegram_set_commands` / `telegram_get_commands` — all no-op-ish (raise) when `X_REPLY_TG_BOT_TOKEN` + `X_REPLY_TG_CHAT_ID` aren't both set; callers gate with `telegram_enabled()`.
-- **Topic queue**: `load_post_topics` / `save_post_topics` / `next_pending_post_topic` / `mark_post_topic_status`. Topic types are constrained to `VALID_POST_TOPIC_TYPES` = `{news_react, story, argument, casual}`; `normalize_post_topic` coerces unknown types to `argument`.
+- **Topic queue**: `load_post_topics` / `save_post_topics` / `next_pending_post_topic` / `mark_post_topic_status`. Topic types are constrained to `VALID_POST_TOPIC_TYPES` = `{news_react, story, argument, casual, thread, article}`; `normalize_post_topic` coerces unknown types to `argument`. `thread` produces a multi-segment reply chain via `post_send._handle_thread`; `article` posts a long-form article via `article_send.py`.
 
 ### Learning store
 
@@ -80,7 +80,7 @@ Almost everything imports from `common.py`:
 
 ### Selectors are the fragile boundary
 
-If `x.com` changes DOM, the only files that need updating are the harness scripts embedded as f-strings in `prepare_post.py`, `send_reply.py`, `post_send.py`, and `observe_feed.py`. They use `data-testid` attributes (`tweetTextarea_0`, `tweetButton`, `SideNav_NewTweet_Button`, `AppTabBar_Profile_Link`, `article`) — keep these centralized to those four files.
+If `x.com` changes DOM, the files that need updating are the harness scripts embedded as f-strings in `prepare_post.py`, `src/reply/send_reply.py`, `src/post/post_send.py`, `src/post/article_send.py` (long-form article composer), `observe_feed.py`, and `src/hotspot/discover.py::_fetch_company_x_profile` (company X profile scraping). Shared upload-image selectors live in `src/harness.py::harness_upload_image_snippet`. They use `data-testid` attributes (`tweetTextarea_0`, `tweetButton`, `SideNav_NewTweet_Button`, `AppTabBar_Profile_Link`, `article`, `twitter-article-title`, `tweet`, `tweetText`) — keep selectors scoped to these locations. When adding a new x.com interaction, add it to one of these existing modules rather than spreading selectors further.
 
 ## Configuration
 

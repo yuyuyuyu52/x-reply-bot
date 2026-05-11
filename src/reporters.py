@@ -8,6 +8,7 @@ state files so we send each report at most once per window.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta
 
@@ -117,7 +118,6 @@ def count_scheduled_posts(date_str: str) -> int:
 
 
 def post_daily_limit() -> int:
-    import os
     try:
         return max(1, int(os.environ.get("X_POST_DAILY_LIMIT", "2")))
     except ValueError:
@@ -285,7 +285,6 @@ def count_hotspot_posts_today(date_str: str) -> int:
 
 
 def hotspot_daily_limit() -> int:
-    import os
     try:
         return max(1, int(os.environ.get("X_HOTSPOT_DAILY_LIMIT", "3")))
     except ValueError:

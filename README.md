@@ -130,7 +130,7 @@ python3 post_once.py
 Run one learning pass:
 
 ```bash
-python3 observe_feed.py
+python3 src/learning/observe.py
 ```
 
 Proactive post scheduler defaults:
@@ -227,7 +227,7 @@ The optional cron schedule is:
 - Background loop: `bot_loop.sh`
 - Background daemon: `bot_daemon.py`
 - Proactive posting: `post_topics.py`, `post_generate.py`, `post_send.py`, `post_once.py`
-- Observation and learning: `observe_feed.py`, `learning_store.py`
+- Observation and learning: `src/learning/observe.py`, `src/learning/store.py`, `src/learning/revisit.py`
 - Start/stop/status: `start_bot.sh`, `stop_bot.sh`, `status_bot.sh`
 - Scheduler wrapper: `scheduled_run.sh`
 - Cron installer/removal: `install_cron.sh`, `uninstall_cron.sh`

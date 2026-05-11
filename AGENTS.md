@@ -18,7 +18,7 @@ python3 generate_reply.py        # LLM reply generation, prints JSON on stdout
 python3 send_reply.py --reply "..."   # post the reply via browser
 python3 run_once.py              # full reply cycle (prepare → generate → send), used by daemon
 python3 post_once.py [--dry-run] # one proactive post (uses post_topics queue)
-python3 observe_feed.py          # one learning pass into state/learning.db
+python3 src/learning/observe.py  # one learning pass into state/learning.db
 python3 post_topics.py [--add "…"]   # list / append topic queue entries
 python3 sync_tg_commands.py      # push the /run /status /post_* /learn_* /revisit_* command list to Telegram
 ```
@@ -45,8 +45,8 @@ There is no test suite, no linter, and no build step. `__pycache__/` is the only
 
 1. **Reply job** (`run_once.py`) — hourly between Beijing 07:00–23:00, with a deterministic per-hour jitter seeded by `YYYYMMDDHH`.
 2. **Proactive post job** (`post_once.py`) — at the hours in `X_POST_SCHEDULE_HOURS` (default `11,19`), gated by `X_POST_DAILY_LIMIT` and the `pending` count in `state/post_topics.json`.
-3. **Learning job** (`observe_feed.py`) — runs in the gaps; refuses to start if the next reply or post slot is within `X_LEARN_GUARD_SECONDS`.
-4. **Revisit job** (`revisit.py`) — only fires inside the 23:00–07:00 night window, every 30 min; scans `state/post_history/` (proactive posts) and `state/history/` (replies) for items ≥24h old and writes back `engagement_24h` metrics. For replies, we open the original post URL, scroll the thread, and locate our own nested reply by exact `reply_text` match (with author-handle confirmation). Failures retry up to 3 attempts before being marked `failed`.
+3. **Learning job** (`src/learning/observe.py`) — runs in the gaps; refuses to start if the next reply or post slot is within `X_LEARN_GUARD_SECONDS`.
+4. **Revisit job** (`src/learning/revisit.py`) — only fires inside the 23:00–07:00 night window, every 30 min; scans `state/post_history/` (proactive posts) and `state/history/` (replies) for items ≥24h old and writes back `engagement_24h` metrics. For replies, we open the original post URL, scroll the thread, and locate our own nested reply by exact `reply_text` match (with author-handle confirmation). Failures retry up to 3 attempts before being marked `failed`.
 
 The daemon also long-polls Telegram (`getUpdates`) and routes commands (`/run`, `/post_once`, `/post_dry_run`, `/post_status`, `/learn_once`, `/learn_status`, `/revisit_once`, `/revisit_status`, `/event`, `/status`) into the same `start_job` path. A daily cost summary is sent once after 23:00, and a 24h engagement digest is sent once per night window after the first revisit batch completes. Concurrency is enforced by `fcntl.flock` on `state/bot.lock` (daemon) and `state/run_once.lock` / `state/post_once.lock` (jobs).
 
@@ -77,11 +77,11 @@ Almost everything imports from `common.py`:
 
 ### Learning store
 
-`learning_store.py` owns `state/learning.db` (SQLite). Schema is defined inline in the `SCHEMA` list and applied idempotently. `observe_feed.py` writes via `learning_store`; `post_generate.py` reads recent high-quality samples back as style references for proactive posts. Quality labels rank `skip < seen < worth_watching < high_quality`.
+`src/learning/store.py` owns `state/learning.db` (SQLite). Schema is defined inline in the `SCHEMA` list and applied idempotently. `src/learning/observe.py` writes via `src.learning.store`; `src/post/post_generate.py` reads recent high-quality samples back as style references for proactive posts. Quality labels rank `skip < seen < worth_watching < high_quality`.
 
 ### Selectors are the fragile boundary
 
-If `x.com` changes DOM, the only files that need updating are the harness scripts embedded as f-strings in `prepare_post.py`, `send_reply.py`, `post_send.py`, and `observe_feed.py`. They use `data-testid` attributes (`tweetTextarea_0`, `tweetButton`, `SideNav_NewTweet_Button`, `AppTabBar_Profile_Link`, `article`) — keep these centralized to those four files.
+If `x.com` changes DOM, the files that need updating are the harness scripts embedded as f-strings in `src/reply/prepare_post.py`, `src/reply/send_reply.py`, `src/post/post_send.py`, `src/post/article_send.py`, `src/learning/observe.py`, `src/learning/revisit.py`, and `src/hotspot/discover.py::_fetch_company_x_profile`. Shared upload-image selectors live in `src/harness.py::harness_upload_image_snippet`. They use `data-testid` attributes (`tweetTextarea_0`, `tweetButton`, `SideNav_NewTweet_Button`, `AppTabBar_Profile_Link`, `article`) — keep these centralized to those locations.
 
 ## Configuration
 

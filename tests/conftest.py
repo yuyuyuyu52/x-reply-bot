@@ -33,6 +33,7 @@ def _retarget_state(module, target: Path, original_root: Path | None = None) -> 
         if not hasattr(module, "STATE_DIR"):
             return
         original_root = Path(module.STATE_DIR)
+    if hasattr(module, "STATE_DIR"):
         module.STATE_DIR = target
     for name in dir(module):
         if not (name.endswith("_PATH") or name.endswith("_DIR")):

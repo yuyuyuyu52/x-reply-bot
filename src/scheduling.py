@@ -20,7 +20,7 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 def _beijing_now() -> datetime:
     """Current time anchored to Asia/Shanghai (Beijing).
 
-    Use this instead of ``_beijing_now()`` for any scheduling or
+    Use this instead of ``datetime.now()`` for any scheduling or
     today/hour-window decision — otherwise the daemon's behavior depends on
     the host's local timezone, which silently breaks cron windows when run
     in containers, on CI, or after a host TZ change.

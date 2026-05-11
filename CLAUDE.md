@@ -80,7 +80,7 @@ Almost everything imports from `common.py`:
 
 ### Selectors are the fragile boundary
 
-If `x.com` changes DOM, the files that need updating are the harness scripts embedded as f-strings in `prepare_post.py`, `src/reply/send_reply.py`, `src/post/post_send.py`, `src/post/article_send.py` (long-form article composer), `observe_feed.py`, and `src/hotspot/discover.py::_fetch_company_x_profile` (company X profile scraping). Shared upload-image selectors live in `src/harness.py::harness_upload_image_snippet`. They use `data-testid` attributes (`tweetTextarea_0`, `tweetButton`, `SideNav_NewTweet_Button`, `AppTabBar_Profile_Link`, `article`, `twitter-article-title`, `tweet`, `tweetText`) — keep selectors scoped to these locations. When adding a new x.com interaction, add it to one of these existing modules rather than spreading selectors further.
+If `x.com` changes DOM, the files that need updating are the harness scripts embedded as f-strings in `prepare_post.py`, `src/reply/send_reply.py`, `src/post/post_send.py`, `src/post/article_send.py` (long-form article composer), `src/observe_feed.py`, `src/revisit.py` (engagement-metric backfill), and `src/hotspot/discover.py::_fetch_company_x_profile` (company X profile scraping). Shared upload-image selectors live in `src/harness.py::harness_upload_image_snippet`. They use `data-testid` attributes (`tweetTextarea_0`, `tweetButton`, `SideNav_NewTweet_Button`, `AppTabBar_Profile_Link`, `article`, `twitter-article-title`, `tweet`, `tweetText`, `User-Name`, `[data-testid$="-follow"]`/`[data-testid$="-unfollow"]`) — keep selectors scoped to these locations. When adding a new x.com interaction, add it to one of these existing modules rather than spreading selectors further.
 
 ## Configuration
 

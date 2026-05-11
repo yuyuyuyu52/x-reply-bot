@@ -19,7 +19,7 @@ os.environ["X_POST_JITTER_SECONDS"] = "0"
 os.environ["X_LEARN_INTERVAL_SECONDS"] = "900"
 os.environ["X_POST_SCHEDULE_HOURS"] = "11,19"
 
-import bot_daemon as bd  # noqa: E402
+import src.scheduling as bd  # noqa: E402  -- scheduling helpers were extracted from bot_daemon
 
 CST = timezone(timedelta(hours=8))
 

@@ -55,23 +55,20 @@ def _parse_discovered(raw: str) -> Optional[datetime]:
 def _freshness_weight(age_hours: float) -> float:
     if age_hours <= 6:
         return 1.0
-    if age_hours >= 24:
-        return 0.0
-    return 1.0 - 0.7 * (age_hours - 6) / 18.0
+    return max(0.0, 1.0 - 0.7 * (age_hours - 6) / 18.0)
 
 
 def _local_score(row: dict, now: datetime) -> float:
     disc = _parse_discovered(row.get("discovered_at", ""))
     if disc is None:
-        age = 0.0
-    else:
-        age = max(0.0, (now - disc).total_seconds() / 3600.0)
+        return 0.0
+    age = max(0.0, (now - disc).total_seconds() / 3600.0)
     return float(row.get("relevance_score") or 0) * _freshness_weight(age)
 
 
 def _row_to_topic(row: dict) -> dict:
     source = str(row.get("source") or "")
-    raw_id = row["id"].split(":", 1)[1] if ":" in str(row.get("id") or "") else ""
+    raw_id = str(row["id"]).split(":", 1)[1]
     return {
         "id": f"hotspot-{source}-{raw_id}",
         "type": "news_react",

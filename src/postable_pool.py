@@ -57,24 +57,13 @@ def _migrate_legacy_hotspot_topics_once() -> None:
 def next_topic_to_post() -> dict | None:
     _migrate_legacy_hotspot_topics_once()
 
-    try:
-        manual = topics.next_pending_post_topic()
-    except Exception as exc:
-        logger.warning("postable_pool: topics.next_pending failed: %s", exc)
-        manual = None
-
+    manual = topics.next_pending_post_topic()
     if manual:
         manual["_pool"] = "manual"
         manual["_pool_ref"] = ""
         return manual
 
-    try:
-        hotspot = selector.pick_best()
-    except Exception as exc:
-        logger.warning("postable_pool: selector.pick_best failed: %s", exc)
-        hotspot = None
-
-    return hotspot  # already has _pool/_pool_ref or is None
+    return selector.pick_best()
 
 
 def mark_topic_used(topic: dict, status: str = "used", extra: dict | None = None) -> None:
@@ -108,26 +97,14 @@ def pool_status() -> dict:
     manual = topics.post_topic_summary()
     try:
         unposted = hotspot_store.unposted_candidates_within(hours=24, min_score=3)
-        pool_size = len(unposted)
-    except Exception as exc:
-        logger.warning("postable_pool: pool_size query failed: %s", exc)
-        pool_size = 0
-    try:
         stats = hotspot_store.hotspot_stats()
-        discovered_today = int(stats.get("today_discovered") or 0)
+        posted = hotspot_store.posted_today_summaries()
+        hotspot = {
+            "pool_size_24h": len(unposted),
+            "discovered_today": int(stats.get("today_discovered") or 0),
+            "posted_today": len(posted),
+        }
     except Exception as exc:
-        logger.warning("postable_pool: hotspot_stats failed: %s", exc)
-        discovered_today = 0
-    try:
-        posted_today = len(hotspot_store.posted_today_summaries())
-    except Exception as exc:
-        logger.warning("postable_pool: posted_today failed: %s", exc)
-        posted_today = 0
-    return {
-        "manual": manual,
-        "hotspot": {
-            "pool_size_24h": pool_size,
-            "discovered_today": discovered_today,
-            "posted_today": posted_today,
-        },
-    }
+        logger.warning("postable_pool: hotspot status query failed: %s", exc)
+        hotspot = {"pool_size_24h": 0, "discovered_today": 0, "posted_today": 0}
+    return {"manual": manual, "hotspot": hotspot}

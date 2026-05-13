@@ -13,12 +13,11 @@ from src.common import (
     POST_LOCK_PATH,
     ensure_state_dirs,
     load_env_file,
-    mark_post_topic_status,
-    next_pending_post_topic,
     parse_json_object,
     post_history_path_for,
     write_json,
 )
+from src import postable_pool
 from src.logger import get_logger
 from src.persona_store import add_recent_post
 from src.post.article import _handle_article
@@ -97,7 +96,7 @@ def main() -> int:
     logger.info("post_once start trigger=%s dry_run=%s stamp=%s", args.trigger, args.dry_run, stamp)
 
     try:
-        topic = next_pending_post_topic()
+        topic = postable_pool.next_topic_to_post()
         if not topic:
             try:
                 logger.info("post_once generating auto topic")
@@ -166,11 +165,11 @@ def main() -> int:
 
         if not selected_candidate:
             record["status"] = "dry_run_rejected" if args.dry_run else "skipped_no_candidate"
-            if not args.dry_run and topic.get("source") != "auto":
-                mark_post_topic_status(
-                    str(topic.get("id") or ""),
-                    "skipped",
-                    topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
+            if not args.dry_run and topic.get("_pool") in ("manual", "hotspot"):
+                postable_pool.mark_topic_used(
+                    topic,
+                    status="skipped",
+                    extra=topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
                 )
             write_json(LATEST_POST_RUN_PATH, record)
             write_json(post_history_path_for(stamp), record)
@@ -225,11 +224,11 @@ def main() -> int:
         record["status"] = "posted" if send.returncode == 0 else "send_failed"
 
         if send.returncode == 0:
-            if topic.get("source") != "auto":
-                mark_post_topic_status(
-                    str(topic.get("id") or ""),
-                    "used",
-                    topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
+            if topic.get("_pool") in ("manual", "hotspot"):
+                postable_pool.mark_topic_used(
+                    topic,
+                    status="used",
+                    extra=topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
                 )
             add_recent_post(record["post_text"], str(topic.get("type", "")))
 

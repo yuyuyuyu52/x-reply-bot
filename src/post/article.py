@@ -14,11 +14,11 @@ from datetime import datetime
 
 from src.common import (
     LATEST_POST_RUN_PATH,
-    mark_post_topic_status,
     parse_json_object,
     post_history_path_for,
     write_json,
 )
+from src import postable_pool
 from src.logger import get_logger
 from src.persona_store import add_recent_post
 from src.post.handlers_common import (
@@ -173,11 +173,11 @@ def _handle_article(topic: dict, plan: dict, args, started: datetime, stamp: str
     # unresolved — the post already landed; leaving the topic ``pending``
     # would cause a follow-up run to re-post the same article.
     if sent_ok:
-        if topic.get("source") != "auto":
-            mark_post_topic_status(
-                str(topic.get("id") or ""),
-                "used",
-                topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
+        if topic.get("_pool") in ("manual", "hotspot"):
+            postable_pool.mark_topic_used(
+                topic,
+                status="used",
+                extra=topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
             )
         add_recent_post(f"[文章] {title}", "article")
 

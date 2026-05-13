@@ -15,11 +15,11 @@ from datetime import datetime
 
 from src.common import (
     LATEST_POST_RUN_PATH,
-    mark_post_topic_status,
     parse_json_object,
     post_history_path_for,
     write_json,
 )
+from src import postable_pool
 from src.logger import get_logger
 from src.persona_store import add_recent_post
 from src.post.handlers_common import (
@@ -216,11 +216,11 @@ def _handle_thread(topic: dict, plan: dict, args, started: datetime, stamp: str,
         # Mark topic used even when URL is unresolved — the post landed,
         # so we must NOT leave the topic pending or a follow-up run will
         # re-post the same content.
-        if topic.get("source") != "auto":
-            mark_post_topic_status(
-                str(topic.get("id") or ""),
-                "used",
-                topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
+        if topic.get("_pool") in ("manual", "hotspot"):
+            postable_pool.mark_topic_used(
+                topic,
+                status="used",
+                extra=topic_extra_update(record["status"], record["time_beijing"], dry_run=False),
             )
         add_recent_post(segments[0]["text"], "thread")
 

@@ -269,5 +269,119 @@ def test_concurrent_writes_do_not_raise_operational_error(tmp_state, freeze):
     assert len(rows) == 10
 
 
+def test_posted_at_column_added_on_open(tmp_path, monkeypatch):
+    """旧库（无 posted_at 列）打开后应自动加列且不破坏数据。"""
+    db_path = tmp_path / "legacy_hotspot.db"
+    legacy = sqlite3.connect(str(db_path))
+    legacy.executescript("""
+        CREATE TABLE hotspots (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            url TEXT NOT NULL DEFAULT '',
+            hn_score INTEGER NOT NULL DEFAULT 0,
+            hn_descendants INTEGER NOT NULL DEFAULT 0,
+            relevance_score INTEGER NOT NULL DEFAULT 0,
+            relevance_reason TEXT NOT NULL DEFAULT '',
+            angle TEXT NOT NULL DEFAULT '',
+            cn_summary TEXT NOT NULL DEFAULT '',
+            discovered_at TEXT NOT NULL DEFAULT '',
+            added_to_queue INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO hotspots(id, source, relevance_score, discovered_at)
+        VALUES ('hn:legacy', 'hn', 4, '2026-05-13 10:00:00 CST');
+    """)
+    legacy.commit()
+    legacy.close()
+
+    monkeypatch.setattr(store, "HOTSPOT_STORE_PATH", db_path)
+
+    # First call triggers schema migration.
+    assert store.is_seen("hn", "legacy") is True
+
+    with sqlite3.connect(str(db_path)) as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(hotspots)")}
+        assert "posted_at" in cols
+        # Existing row preserved with empty posted_at default.
+        row = conn.execute(
+            "SELECT posted_at FROM hotspots WHERE id = 'hn:legacy'"
+        ).fetchone()
+        assert row[0] == ""
+
+
+def test_mark_posted_sets_timestamp(tmp_path, monkeypatch):
+    db_path = tmp_path / "hot.db"
+    monkeypatch.setattr(store, "HOTSPOT_STORE_PATH", db_path)
+    store.insert_hotspot("hn", "42", "title", "url", relevance_score=4)
+    assert store.is_seen("hn", "42")
+
+    _freeze(monkeypatch, datetime(2026, 5, 13, 14, 30, 0, tzinfo=BEIJING_TZ))
+    store.mark_posted("hn", "42")
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT posted_at FROM hotspots WHERE id='hn:42'").fetchone()
+    assert row["posted_at"].startswith("2026-05-13 14:30:00")
+
+
+def test_mark_posted_missing_row_is_silent(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "HOTSPOT_STORE_PATH", tmp_path / "hot.db")
+    # No insert — should not raise.
+    store.mark_posted("hn", "nonexistent")
+
+
+def test_unposted_candidates_within_filters_correctly(tmp_path, monkeypatch):
+    db_path = tmp_path / "hot.db"
+    monkeypatch.setattr(store, "HOTSPOT_STORE_PATH", db_path)
+
+    _freeze(monkeypatch, datetime(2026, 5, 13, 12, 0, 0, tzinfo=BEIJING_TZ))
+
+    # Fresh + high score → keep
+    store.insert_hotspot("hn", "fresh", "Fresh post", "u1", relevance_score=4)
+    # Fresh + low score → drop
+    store.insert_hotspot("hn", "low", "Low score", "u2", relevance_score=2)
+    # Older than 24h → drop (manually backdate)
+    store.insert_hotspot("hn", "old", "Old post", "u3", relevance_score=5)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "UPDATE hotspots SET discovered_at='2026-05-11 12:00:00 CST' WHERE id='hn:old'"
+        )
+        conn.commit()
+    # Already posted → drop
+    store.insert_hotspot("hn", "done", "Already posted", "u4", relevance_score=5)
+    store.mark_posted("hn", "done")
+
+    rows = store.unposted_candidates_within(hours=24, min_score=3)
+    ids = [r["id"] for r in rows]
+    assert ids == ["hn:fresh"]
+    assert rows[0]["title"] == "Fresh post"
+    assert rows[0]["relevance_score"] == 4
+
+
+def test_posted_today_summaries_returns_only_today(tmp_path, monkeypatch):
+    db_path = tmp_path / "hot.db"
+    monkeypatch.setattr(store, "HOTSPOT_STORE_PATH", db_path)
+
+    _freeze(monkeypatch, datetime(2026, 5, 13, 9, 0, 0, tzinfo=BEIJING_TZ))
+    store.insert_hotspot("hn", "yest", "Yesterday hot", "u1",
+                         relevance_score=4, cn_summary="昨日话题")
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "UPDATE hotspots SET posted_at='2026-05-12 22:00:00 CST' WHERE id='hn:yest'"
+        )
+        conn.commit()
+
+    _freeze(monkeypatch, datetime(2026, 5, 13, 12, 0, 0, tzinfo=BEIJING_TZ))
+    store.insert_hotspot("hn", "today1", "Today hot 1", "u2",
+                         relevance_score=4, cn_summary="今天 Claude 更新")
+    store.mark_posted("hn", "today1")
+    store.insert_hotspot("hn", "today2", "Today hot 2", "u3",
+                         relevance_score=5, cn_summary="另一条今日热点")
+    store.mark_posted("hn", "today2")
+
+    summaries = store.posted_today_summaries()
+    assert sorted(summaries) == sorted(["今天 Claude 更新", "另一条今日热点"])
+
+
 if __name__ == "__main__":
     unittest.main()

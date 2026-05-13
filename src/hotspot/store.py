@@ -45,6 +45,17 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(hotspots)")}
+    if "posted_at" not in cols:
+        conn.execute("ALTER TABLE hotspots ADD COLUMN posted_at TEXT NOT NULL DEFAULT ''")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hotspots_posted "
+        "ON hotspots(posted_at, relevance_score)"
+    )
+    conn.commit()
+
+
 @contextmanager
 def _get_conn():
     db = HOTSPOT_STORE_PATH
@@ -52,6 +63,7 @@ def _get_conn():
     with closing(sqlite3.connect(str(db), timeout=10)) as conn:
         conn.row_factory = sqlite3.Row
         _ensure_schema(conn)
+        _ensure_columns(conn)
         yield conn
 
 
@@ -108,6 +120,40 @@ def mark_added_to_queue(source: str, hotspot_id: str) -> None:
         conn.commit()
 
 
+def mark_posted(source: str, hotspot_id: str) -> None:
+    with _get_conn() as conn:
+        now = _now_beijing().strftime("%Y-%m-%d %H:%M:%S %Z")
+        conn.execute(
+            "UPDATE hotspots SET posted_at = ? WHERE id = ?",
+            (now, f"{source}:{hotspot_id}"),
+        )
+        conn.commit()
+
+
+def unposted_candidates_within(hours: int, min_score: int) -> list[dict]:
+    """Return rows where:
+      - relevance_score >= min_score
+      - posted_at IS empty
+      - discovered_at is within `hours` from now (Beijing time)
+    """
+    with _get_conn() as conn:
+        cutoff = (_now_beijing() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        rows = conn.execute(
+            """\
+SELECT id, source, title, url, hn_score, hn_descendants,
+       relevance_score, relevance_reason, angle, cn_summary,
+       discovered_at, posted_at
+FROM hotspots
+WHERE relevance_score >= ?
+  AND COALESCE(posted_at, '') = ''
+  AND discovered_at >= ?
+ORDER BY relevance_score DESC, discovered_at DESC
+""",
+            (min_score, cutoff),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def recent_hotspots(days: int = 1, limit: int = 20) -> list[dict]:
     with _get_conn() as conn:
         cutoff = (_now_beijing() - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -140,6 +186,17 @@ LIMIT ?
         }
         for row in rows
     ]
+
+
+def posted_today_summaries() -> list[str]:
+    """cn_summary list of hotspots posted today (Beijing date)."""
+    with _get_conn() as conn:
+        today = _now_beijing().strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT cn_summary FROM hotspots WHERE posted_at LIKE ?",
+            (f"{today}%",),
+        ).fetchall()
+    return [str(r["cn_summary"] or "") for r in rows if str(r["cn_summary"] or "")]
 
 
 def hotspot_stats() -> dict:

@@ -15,15 +15,11 @@ from src.common import (
     LATEST_HOTSPOT_RUN_PATH,
     ensure_state_dirs,
     load_env_file,
-    load_post_topics,
-    normalize_post_topic,
-    save_post_topics,
     telegram_enabled,
     telegram_notify,
     write_json,
 )
 from src.hotspot.discover import discover_hotspots
-from src.hotspot.store import mark_added_to_queue
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,21 +31,6 @@ def _persist(record: dict, stamp: str) -> None:
     write_json(LATEST_HOTSPOT_RUN_PATH, record)
     HOTSPOT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     write_json(HOTSPOT_HISTORY_DIR / f"{stamp}.json", record)
-
-
-def _queue_daily_hotspot_topics(data: dict, new_topics: list[dict]) -> int:
-    topics = data.setdefault("topics", [])
-    skipped = 0
-    for item in topics:
-        if (item.get("source") or "") != "hotspot":
-            continue
-        if (item.get("status") or "pending") != "pending":
-            continue
-        item["status"] = "skipped"
-        item["skip_reason"] = "superseded_by_daily_hotspots"
-        skipped += 1
-    data["topics"] = [*new_topics, *topics]
-    return skipped
 
 
 def _notify(record: dict) -> None:
@@ -133,22 +114,7 @@ def main() -> int:
         items = result.get("items", [])
         added_items: list[dict] = []
         if items and not args.dry_run:
-            data = load_post_topics()
-            new_topics: list[dict] = []
             for item in items:
-                topic = normalize_post_topic({
-                    "id": f"hotspot-{item['source']}-{item['id']}",
-                    "type": "news_react",
-                    "text": item["cn_summary"],
-                    "source": "hotspot",
-                    "status": "pending",
-                    "subject": item["title"],
-                    "event_or_context": f"今天[{item['source']}] {item['relevance_reason']} | 原链接: {item['url']}",
-                    "stance": item["angle"],
-                    "evidence_hint": f"热度: {item['hn_score']}↑ {item['hn_descendants']}💬 | 相关度: {item['relevance_score']}/5",
-                })
-                new_topics.append(topic)
-                mark_added_to_queue(item["source"], item["id"])
                 added_items.append({
                     "source": item["source"],
                     "title": item["title"],
@@ -156,8 +122,6 @@ def main() -> int:
                     "angle": item["angle"],
                     "relevance_score": item["relevance_score"],
                 })
-            _queue_daily_hotspot_topics(data, new_topics)
-            save_post_topics(data)
 
         record = {
             "time_beijing": started.strftime("%Y-%m-%d %H:%M:%S %Z"),

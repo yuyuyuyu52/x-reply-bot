@@ -137,6 +137,9 @@ def unposted_candidates_within(hours: int, min_score: int) -> list[dict]:
       - discovered_at is within `hours` from now (Beijing time)
     """
     with _get_conn() as conn:
+        # Cutoff omits %Z so it sorts as a prefix of stored discovered_at values
+        # like "2026-05-13 14:30:00 CST" — lexicographic compare keeps any
+        # same-second-or-later row.
         cutoff = (_now_beijing() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
         rows = conn.execute(
             """\

@@ -13,6 +13,8 @@ from src.common import (
 COMMANDS = [
     {"command": "run", "description": "立即跑一轮回复"},
     {"command": "status", "description": "查看回复机器人状态"},
+    {"command": "update", "description": "拉取最新代码并重启机器人"},
+    {"command": "config", "description": "查看和修改机器人配置"},
     {"command": "post_once", "description": "立即主动发帖"},
     {"command": "post_dry_run", "description": "生成主动发帖草稿"},
     {"command": "post_status", "description": "查看主动发帖状态"},

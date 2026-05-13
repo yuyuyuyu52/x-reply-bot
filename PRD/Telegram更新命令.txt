@@ -1,0 +1,204 @@
+# Telegram 更新命令
+
+面向用户时，不能要求用户登录服务器、执行 `git pull`、重启 tmux 或排查脚本路径。
+用户应该只需要在 Telegram 里发送一个命令，就能让服务器拉取最新版本并恢复可用状态。
+
+
+## 一、目标
+
+新增 Telegram 命令：
+
+```text
+/update
+```
+
+用户发送 `/update` 后，bot 自动完成：
+
+1. 拉取最新代码
+2. 做基础可用性检查
+3. 同步 Telegram 命令菜单
+4. 重启 bot
+5. 检查 bot 是否重新运行
+6. 把成功或失败结果发回 Telegram
+
+最终体验：
+
+```text
+开发者本地提交并 push
+用户或运维在 Telegram 发送 /update
+服务器自动更新并通知结果
+```
+
+
+## 二、用户体验
+
+### 正常更新
+
+用户发送：
+
+```text
+/update
+```
+
+bot 立即回复：
+
+```text
+🔄 更新
+
+✅ 已收到 /update，开始更新：拉取最新代码、检查并重启。更新完成后会再通知你。
+```
+
+更新完成后回复：
+
+```text
+✅ 更新完成
+
+已更新：old_rev → new_rev
+已通过编译检查，bot 已重启并通过状态检查。
+```
+
+如果没有新代码：
+
+```text
+✅ 更新完成
+
+当前已经是最新版本：new_rev
+已通过编译检查，bot 已重启并通过状态检查。
+```
+
+
+### 当前有任务运行
+
+如果 bot 正在回复、主动发帖、观察学习、热点发现或反馈回访，不应强行更新。
+
+回复：
+
+```text
+⏳ 当前已有任务在执行，暂不更新。请等当前任务结束后再发送 /update。
+```
+
+这样避免更新过程杀掉正在操作浏览器的任务，减少半发帖、半回复、锁文件残留等问题。
+
+
+### 更新失败
+
+如果更新失败，必须告知用户，并尽量保持或恢复 bot 运行。
+
+回复：
+
+```text
+❌ 更新失败
+
+已尝试保持/恢复 bot 运行。
+日志：state/logs/update.log
+exit_code: <code>
+line: <line>
+```
+
+完整日志写入：
+
+```text
+state/logs/update.log
+```
+
+
+## 三、更新流程
+
+后台更新脚本执行顺序：
+
+1. 获取 `state/update.lock`，防止重复更新
+2. 记录当前 git revision
+3. 执行 `git pull --ff-only`
+4. 记录更新后的 git revision
+5. 执行 Python 编译检查：
+
+```bash
+python3 -m compileall -q bot_daemon.py discover_hotspots.py post_once.py post_topics.py run_once.py sync_tg_commands.py src
+```
+
+6. 执行 Telegram 命令菜单同步：
+
+```bash
+python3 sync_tg_commands.py
+```
+
+7. 重启 bot：
+
+```bash
+bash scripts/stop_bot.sh
+bash scripts/start_bot.sh
+```
+
+8. 检查状态：
+
+```bash
+bash scripts/status_bot.sh
+```
+
+9. 成功或失败都回 Telegram
+
+
+## 四、实现要求
+
+### Telegram handler
+
+- `/update` 只负责启动后台更新脚本
+- 不在 daemon 进程内直接执行 stop/start
+- 使用 detached subprocess，避免当前 Telegram long-poll 被自己杀掉
+- 如果当前已有 `run_proc` 在执行，则拒绝更新
+
+
+### 更新脚本
+
+新增：
+
+```text
+scripts/update_bot.sh
+```
+
+脚本要求：
+
+- 从 `scripts/_common.sh` 读取项目根目录、`.env`、Python 路径、tmux session 名
+- 日志追加到 `state/logs/update.log`
+- 使用 `state/update.lock` 防止并发
+- `git pull` 必须使用 `--ff-only`，避免服务器上产生 merge commit 或交互式冲突
+- 编译检查失败时不继续宣称成功
+- 重启后必须确认 tmux session 存活
+- 失败时尝试启动 bot，并通知用户看日志
+
+
+### Telegram 命令菜单
+
+`sync_tg_commands.py` 需要加入：
+
+```json
+{"command": "update", "description": "拉取最新代码并重启机器人"}
+```
+
+
+## 五、边界和限制
+
+- `/update` 只能更新已经部署过这项功能的服务器；第一次仍需要手动把新版代码部署到服务器
+- `/update` 不处理 git 冲突；如果服务器有本地未提交改动，`git pull --ff-only` 应失败并通知用户
+- `/update` 不保证 Chrome 登录态、CDP、browser-harness 一定健康；它只检查代码可编译、bot 已重启、tmux session 存活
+- 如果新版本引入运行时配置项，仍需要服务器 `.env` 配好后才能完整工作
+
+
+## 六、验收标准
+
+1. Telegram 发送 `/update` 后，能立即收到“开始更新”的确认
+2. 当前有任务运行时，`/update` 不会启动更新
+3. 更新脚本能拉取最新代码并写入 `state/logs/update.log`
+4. Python 编译检查失败时，更新结果必须显示失败
+5. 更新后 bot 被重启，并通过 `scripts/status_bot.sh`
+6. 成功和失败都必须发送 Telegram 通知
+7. Telegram 命令菜单包含 `/update`
+
+
+## 七、已实现文件
+
+- `src/telegram_commands.py` — 处理 `/update` 命令并启动后台更新脚本
+- `scripts/update_bot.sh` — 执行拉取、检查、重启、状态确认和通知
+- `sync_tg_commands.py` — 注册 `/update` 菜单命令
+- `tests/unit/test_update_command.py` — 覆盖 `/update` 启动后台脚本和运行中拒绝更新
+

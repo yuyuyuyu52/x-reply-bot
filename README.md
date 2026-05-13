@@ -21,8 +21,10 @@ This is a standalone bot.
   - `http://127.0.0.1:9222`
   - `http://10.0.0.175:9223`
   - or set `X_REPLY_CDP_URL`
-- `browser-harness` installed:
-  - set `BROWSER_HARNESS_BIN` to the absolute path of the binary
+- This repo includes `browser-harness` under `vendor/browser-harness`. On a new server, run:
+  - `bash scripts/bootstrap_browser.sh`
+  - `bash scripts/start_chrome.sh`
+  - log in to X once in that Chrome profile
 - A compatible LLM API:
   - `X_REPLY_API_KEY`
   - `X_REPLY_BASE_URL`
@@ -38,16 +40,18 @@ will not match the documented model id.
 
 ## Quick Start
 
+First-time server setup: [DEPLOY.md](DEPLOY.md)
+
 ```bash
 cd /path/to/x-reply-bot   # wherever you cloned the repo
-bash start_bot.sh
+bash scripts/start_bot.sh
 ```
 
 Check status:
 
 ```bash
 cd /path/to/x-reply-bot   # wherever you cloned the repo
-bash status_bot.sh
+bash scripts/status_bot.sh
 ```
 
 Telegram commands from your phone:
@@ -55,6 +59,8 @@ Telegram commands from your phone:
 ```text
 /run
 /status
+/update
+/config
 /post_once
 /post_dry_run
 /post_status
@@ -69,7 +75,7 @@ Stop it:
 
 ```bash
 cd /path/to/x-reply-bot   # wherever you cloned the repo
-bash stop_bot.sh
+bash scripts/stop_bot.sh
 ```
 
 ## Step By Step
@@ -167,19 +173,19 @@ Files:
 Run the hourly scheduler once without waiting for jitter:
 
 ```bash
-bash scheduled_run.sh --no-jitter
+bash scripts/scheduled_run.sh --no-jitter
 ```
 
 If you ever want cron instead of the background bot, install it with:
 
 ```bash
-bash install_cron.sh
+bash scripts/install_cron.sh
 ```
 
 Remove the cron schedule:
 
 ```bash
-bash uninstall_cron.sh
+bash scripts/uninstall_cron.sh
 ```
 
 The optional cron schedule is:
@@ -209,8 +215,11 @@ The optional cron schedule is:
   `/chat/completions` path.
 - Telegram notify is optional. Set `X_REPLY_TG_BOT_TOKEN` and
   `X_REPLY_TG_CHAT_ID` in `.env` to receive a message after successful sends.
-- When Telegram is configured, the background bot also accepts `/run` and
-  `/status` from the configured chat id.
+- When Telegram is configured, the background bot also accepts commands from
+  the configured chat id. Use `/config list`, `/config get KEY`,
+  `/config set KEY VALUE`, `/config unset KEY`, `/config pending`,
+  `/config confirm <id>`, and `/config cancel <id>` to manage `.env` from
+  Telegram. Sensitive values are masked and require confirmation.
 - Learning mode runs in idle windows between reply jobs and proactive-post jobs.
 - Learning mode studies the feed, saves high-quality posts to SQLite, and feeds
   recent learnings back into proactive-post generation as style references.

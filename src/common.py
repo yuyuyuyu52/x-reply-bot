@@ -16,6 +16,7 @@ Canonical homes for extracted code:
 from __future__ import annotations
 
 import fcntl
+import importlib
 import json
 import os
 import re
@@ -304,57 +305,76 @@ def persist_run_record(record: dict, latest_path: Path, history_dir: Path, stamp
 # ---------------------------------------------------------------------------
 # Backwards-compatibility re-exports
 # ---------------------------------------------------------------------------
-# Everything below was moved to dedicated modules but is re-exported here so
-# that ``from common import X`` in existing code keeps working.
+# Everything below was moved to dedicated modules but remains available through
+# ``src.common`` for older callers.  Keep these lazy: eager imports here create
+# circular imports when the extracted modules are imported directly.
+_RE_EXPORTS = {
+    "anthropic_completion": ("src.llm", "anthropic_completion"),
+    "chat_completion": ("src.llm", "chat_completion"),
+    "chat_json_result": ("src.llm", "chat_json_result"),
+    "chat_text": ("src.llm", "chat_text"),
+    "chat_text_result": ("src.llm", "chat_text_result"),
+    "estimate_cost": ("src.llm", "estimate_cost"),
+    "extract_first_json_object": ("src.llm", "extract_first_json_object"),
+    "extract_usage": ("src.llm", "extract_usage"),
+    "parse_json_object": ("src.llm", "parse_json_object"),
+    "post_json_with_retries": ("src.llm", "post_json_with_retries"),
+    "provider_mode": ("src.llm", "provider_mode"),
+    "qwen35_flash_rates": ("src.llm", "qwen35_flash_rates"),
+    "should_retry_http_error": ("src.llm", "should_retry_http_error"),
+    "browser_harness_bin": ("src.harness", "browser_harness_bin"),
+    "browser_harness_root": ("src.harness", "browser_harness_root"),
+    "cdp_urls": ("src.harness", "cdp_urls"),
+    "harness_compose_and_send_snippet": ("src.harness", "harness_compose_and_send_snippet"),
+    "harness_navigate_snippet": ("src.harness", "harness_navigate_snippet"),
+    "harness_upload_image_snippet": ("src.harness", "harness_upload_image_snippet"),
+    "resolve_ws": ("src.harness", "resolve_ws"),
+    "restart_harness_daemon": ("src.harness", "restart_harness_daemon"),
+    "run_harness": ("src.harness", "run_harness"),
+    "telegram_chat_id": ("src.telegram", "telegram_chat_id"),
+    "telegram_enabled": ("src.telegram", "telegram_enabled"),
+    "telegram_get_commands": ("src.telegram", "telegram_get_commands"),
+    "telegram_notify": ("src.telegram", "telegram_notify"),
+    "telegram_set_commands": ("src.telegram", "telegram_set_commands"),
+    "telegram_token": ("src.telegram", "telegram_token"),
+    "tg_api": ("src.telegram", "tg_api"),
+    "load_post_topics": ("src.topics", "load_post_topics"),
+    "mark_post_topic_status": ("src.topics", "mark_post_topic_status"),
+    "next_pending_post_topic": ("src.topics", "next_pending_post_topic"),
+    "normalize_post_topic": ("src.topics", "normalize_post_topic"),
+    "post_topic_summary": ("src.topics", "post_topic_summary"),
+    "save_post_topics": ("src.topics", "save_post_topics"),
+    "topic_summary_text": ("src.topics", "topic_summary_text"),
+}
 
-from src.llm import (  # noqa: E402, F401
-    anthropic_completion,
-    chat_completion,
-    chat_json_result,
-    chat_text,
-    chat_text_result,
-    estimate_cost,
-    extract_first_json_object,
-    extract_usage,
-    parse_json_object,
-    post_json_with_retries,
-    provider_mode,
-    qwen35_flash_rates,
-    should_retry_http_error,
+
+def __getattr__(name: str):
+    if name == "BROWSER_HARNESS":
+        value = __getattr__("browser_harness_bin")()
+        globals()[name] = value
+        return value
+    if name == "BROWSER_HARNESS_ROOT":
+        value = __getattr__("browser_harness_root")()
+        globals()[name] = value
+        return value
+    if name == "CDP_URLS":
+        value = __getattr__("cdp_urls")()
+        globals()[name] = value
+        return value
+    if name not in _RE_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = _RE_EXPORTS[name]
+    value = getattr(importlib.import_module(module_name), attr_name)
+    globals()[name] = value
+    return value
+
+
+__all__ = sorted(
+    [
+        name
+        for name in globals()
+        if not name.startswith("_") and name not in {"importlib", "json", "os", "re"}
+    ]
+    + list(_RE_EXPORTS)
+    + ["BROWSER_HARNESS", "BROWSER_HARNESS_ROOT", "CDP_URLS"]
 )
-
-from src.harness import (  # noqa: E402, F401
-    browser_harness_bin,
-    browser_harness_root,
-    cdp_urls,
-    harness_compose_and_send_snippet,
-    harness_navigate_snippet,
-    resolve_ws,
-    restart_harness_daemon,
-    run_harness,
-)
-
-from src.telegram import (  # noqa: E402, F401
-    telegram_chat_id,
-    telegram_enabled,
-    telegram_get_commands,
-    telegram_notify,
-    telegram_set_commands,
-    telegram_token,
-    tg_api,
-)
-
-from src.topics import (  # noqa: E402, F401
-    load_post_topics,
-    mark_post_topic_status,
-    next_pending_post_topic,
-    normalize_post_topic,
-    post_topic_summary,
-    save_post_topics,
-    topic_summary_text,
-)
-
-# Legacy module-level constants (evaluated lazily via functions now).
-BROWSER_HARNESS = browser_harness_bin()
-BROWSER_HARNESS_ROOT = browser_harness_root()
-CDP_URLS = cdp_urls()

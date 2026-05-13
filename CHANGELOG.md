@@ -8,10 +8,18 @@ omitted unless they alter how the bot is configured or operated.
 ## [Unreleased]
 
 ### Added
+- Add browser dependency bootstrap scripts for Chrome CDP and browser-harness deployment
+- Add /config Telegram commands to view, edit, confirm, apply, and rollback .env-based bot configuration
+- Add /update Telegram command to pull latest code, compile-check, restart, health-check, and report the result
 - Add /review and /rate Telegram commands for human feedback scoring on replies and proactive posts
 - Feedback scores injected into reply and post generation prompts as style reference
 
 ### Fixed
+- Fix circular imports that prevented direct entrypoint module startup
+- Prevent Telegram /config from changing process-control variables that can break rollback or duplicate daemon sessions
+- Track /update as the active Telegram job while the detached update script is running
+- Launch Chrome through the macOS app launcher on Darwin so CDP startup is stable in local tests
+- Fix generated reply-sending harness code so profile URL lookup and boolean literals execute as Python
 - 修复 `run_once.py` 缺少 `import fcntl` 导致 `NameError`
 - 修复 `src/common.py` 的 `ROOT` 指向 `src/` 而非 repo root，导致 `.env` 和 `state/` 路径错位
 - 修复 `run_once.py`、`post_once.py`、`bot_daemon.py` 的 subprocess/Popen 调用缺少 `PYTHONPATH`，导致子脚本 `from src.xxx` 报 `ModuleNotFoundError`
@@ -32,5 +40,6 @@ omitted unless they alter how the bot is configured or operated.
 - `scripts/_common.sh`：让所有 shell 脚本可在任意部署目录运行；新增 `X_REPLY_PYTHON` / `X_REPLY_TMUX_SESSION` / `X_REPLY_TZ` 环境变量覆盖
 
 ### Changed
+- Vendor browser-harness in the repository and install it from `vendor/browser-harness`
 - `start_bot.sh` / `stop_bot.sh` / `status_bot.sh` / `bot_loop.sh` / `scheduled_run.sh` / `install_cron.sh` / `uninstall_cron.sh` 不再硬编码 `/home/will/x-reply-bot` 和 harness 路径，改为从脚本自身位置反推
 - AGENTS.md 升级为 "Four job types"

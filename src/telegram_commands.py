@@ -50,6 +50,18 @@ def _safe_notify(text: str) -> None:
         logger.warning(f"telegram_notify failed: {exc}")
 
 
+def _start_update_process(root, env: dict) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        ["/usr/bin/env", "bash", str(root / "scripts/update_bot.sh")],
+        cwd=str(root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+
+
 def tg_api(method: str, params: dict | None = None, timeout: int = 30) -> dict:
     token = telegram_token()
     if not token:
@@ -113,6 +125,21 @@ def handle_command(
 
     if command.startswith("/status"):
         _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, active_label))
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+
+    if command.startswith("/update"):
+        if run_proc and run_proc.poll() is None:
+            _safe_notify("⏳ 当前已有任务在执行，暂不更新。请等当前任务结束后再发送 /update。")
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+        _safe_notify("🔄 更新\n\n✅ 已收到 /update，开始更新：拉取最新代码、检查并重启。更新完成后会再通知你。")
+        update_proc = _start_update_process(ROOT, _child_env())
+        return update_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "scripts/update_bot.sh"
+
+    if command.startswith("/config"):
+        from src.config_manager import handle_config_command
+
+        body = stripped[len(command):].strip()
+        _safe_notify(handle_config_command(body))
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/post_once"):

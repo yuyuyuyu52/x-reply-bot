@@ -89,7 +89,7 @@ import json
 url = {json.dumps(url)}
 reply_text = {json.dumps(reply, ensure_ascii=False)}
 action = {json.dumps(action)}
-return_reply_url = {json.dumps(return_reply_url)}
+return_reply_url = {return_reply_url!r}
 ready_shot = {json.dumps(str(ready_shot))}
 posted_shot = {json.dumps(str(posted_shot))}
 {nav_snippet}
@@ -179,7 +179,9 @@ else:
 {like_block}
     reply_url = ''
     if ok and return_reply_url:
-        profile_url = js("document.querySelector('a[data-testid=\"AppTabBar_Profile_Link\"]')?.href || ''")
+        profile_url = js('''
+document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.href || ''
+''')
         if profile_url:
             js('window.onbeforeunload = null')
             goto_url(profile_url)

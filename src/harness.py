@@ -16,21 +16,23 @@ from src.logger import get_logger
 
 logger = get_logger(__name__)
 
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_BROWSER_HARNESS_ROOT = ROOT / "vendor" / "browser-harness"
+DEFAULT_BROWSER_HARNESS_BIN = ROOT / ".bin" / "browser-harness"
+
 
 def browser_harness_bin() -> str:
-    return os.environ.get(
-        "BROWSER_HARNESS_BIN",
-        "/home/will/.local/bin/browser-harness",
-    )
+    configured = os.environ.get("BROWSER_HARNESS_BIN", "").strip()
+    if configured:
+        return configured
+    return str(DEFAULT_BROWSER_HARNESS_BIN)
 
 
 def browser_harness_root() -> Path:
-    return Path(
-        os.environ.get(
-            "BROWSER_HARNESS_ROOT",
-            "/home/will/Developer/browser-harness",
-        )
-    )
+    configured = os.environ.get("BROWSER_HARNESS_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return DEFAULT_BROWSER_HARNESS_ROOT
 
 
 def cdp_urls() -> list[str]:
@@ -57,10 +59,11 @@ def resolve_ws() -> str:
 
 def restart_harness_daemon(name: str = "x-reply-bot") -> None:
     harness_root = browser_harness_root()
+    harness_src = harness_root / "src"
     script = (
         "import sys; "
-        f"sys.path.insert(0, {json.dumps(str(harness_root))}); "
-        "from admin import restart_daemon; "
+        f"sys.path.insert(0, {json.dumps(str(harness_src))}); "
+        "from browser_harness.admin import restart_daemon; "
         f"restart_daemon({json.dumps(name)})"
     )
     subprocess.run(

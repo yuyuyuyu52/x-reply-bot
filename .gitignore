@@ -5,6 +5,8 @@ __pycache__/
 *.pyd
 
 state/
+.bin/
+.deps/
 
 .DS_Store
 

@@ -7,6 +7,20 @@ omitted unless they alter how the bot is configured or operated.
 
 ## [Unreleased]
 
+### Hotspot 发现与发帖解耦
+
+- 新增 `src/postable_pool.py` 服务层：post_once 通过它按优先级 `人工 > 热点 > auto` 取下一个 topic。
+- 新增 `src/hotspot/selector.py`：候选 24h 内、按 `relevance_score × freshness_decay` 排序取本地 top 5，再用一次 LLM 调用判主题去重，避免同一天发同件事。
+- `hotspot.db` 新增 `posted_at` 列；旧字段 `added_to_queue` 保留不再读写。schema 在打开 DB 时幂等迁移。
+- `discover_hotspots.py` 不再写入 `post_topics.json`；只往 `hotspot.db` 写入候选。新热点入库后由 post_once 在发帖时挑选。
+- `post_topics.json` 中遗留的 `source=hotspot && status=pending` 条目，会在 postable_pool 首次被调用时自动改为 `status=skipped, skip_reason=migrated_to_db_pool`（幂等、自动、无需手动脚本）。
+- `/status` 文案变更：原"队列 pending/used/skipped"扩展为"人工待发/已用/跳过 + 热点池(24h) + 今日新发现/已发热点"。
+
+#### 行为变更总结
+
+- 发现侧：每次跑 `discover_hotspots`，所有 relevant 候选都进库，**不**截顶到 3 条；旧的"discover 写 3 条到 JSON 队列"行为消失。
+- 发帖侧：每次跑 `post_once`，若人工/Telegram 队列为空，从 hotspot.db 实时选当下最佳；若主题与当天已发重复，回落到 auto_topic。
+
 ### Added
 - Add browser dependency bootstrap scripts for Chrome CDP and browser-harness deployment
 - Add /config Telegram commands to view, edit, confirm, apply, and rollback .env-based bot configuration

@@ -303,7 +303,6 @@ def hotspot_summary(next_hotspot_at: datetime) -> str:
     lines = format_header("🔥 热点发现状态")
     lines.extend([
         format_kv("📊", "今日发现", stats["today_discovered"]),
-        format_kv("✅", "今日入队", stats["today_added_to_queue"]),
         format_kv("📚", "历史总计", stats["total_discovered"]),
         format_kv("📅", "今日热点发帖", f"{count_hotspot_posts_today(today)}/{hotspot_daily_limit()}"),
         format_kv("🕒", "下次发现", next_hotspot_at.strftime('%Y-%m-%d %H:%M:%S %Z')),

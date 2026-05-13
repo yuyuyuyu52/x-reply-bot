@@ -20,10 +20,8 @@ from src.common import (
 )
 from src.logger import get_logger
 from src.reporters import (
-    count_hotspot_posts_today,
     count_scheduled_posts,
     format_kv,
-    hotspot_daily_limit,
     maybe_send_daily_cost_report,
     maybe_send_revisit_report,
     post_daily_limit,
@@ -214,11 +212,9 @@ def main() -> int:
                 and (next_run_at - now).total_seconds() > hotspot_guard_seconds()
                 and (next_post_run_at - now).total_seconds() > hotspot_guard_seconds()
             ):
-                today = now.strftime("%Y-%m-%d")
-                if count_hotspot_posts_today(today) < hotspot_daily_limit():
-                    run_proc = start_job("discover_hotspots.py", "schedule")
-                    run_trigger = "schedule"
-                    active_label = "discover_hotspots.py"
+                run_proc = start_job("discover_hotspots.py", "schedule")
+                run_trigger = "schedule"
+                active_label = "discover_hotspots.py"
                 next_hotspot_at = next_hotspot_after(now)
             elif (
                 run_proc is None

@@ -14,6 +14,7 @@ omitted unless they alter how the bot is configured or operated.
 - `hotspot.db` 新增 `posted_at` 列；旧字段 `added_to_queue` 保留不再读写。schema 在打开 DB 时幂等迁移。
 - `discover_hotspots.py` 不再写入 `post_topics.json`；只往 `hotspot.db` 写入候选。新热点入库后由 post_once 在发帖时挑选。
 - `post_topics.json` 中遗留的 `source=hotspot && status=pending` 条目，会在 postable_pool 首次被调用时自动改为 `status=skipped, skip_reason=migrated_to_db_pool`（幂等、自动、无需手动脚本）。
+- hotspot pool 在 post_once 标记 `status="skipped"` 时也写入 `posted_at`（LLM 内容审查拒绝是永久性的，避免下次重新挑中同一条烧 LLM 成本）；瞬态的 `send_failed` 仍不写入，保留重试机会。
 - `/status` 文案变更：原"队列 pending/used/skipped"扩展为"人工待发/已用/跳过 + 热点池(24h) + 今日新发现/已发热点"。
 
 #### 行为变更总结

@@ -4,9 +4,6 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
@@ -24,6 +21,7 @@ def test_post_summary_shows_manual_and_hotspot_pool(tmp_state, monkeypatch):
     monkeypatch.setattr(reporters, "count_scheduled_posts", lambda day: 1)
 
     out = reporters.post_summary(datetime(2026, 5, 13, 19, 0, 0, tzinfo=timezone(timedelta(hours=8))))
-    assert "人工待发" in out and "2" in out
-    assert "热点池" in out and "7" in out
+    assert "人工待发: 2" in out
+    assert "热点池(24h): 7" in out
+    assert "今日已发热点: 1" in out
     assert "今日定时已发" in out

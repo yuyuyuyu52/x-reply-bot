@@ -12,6 +12,7 @@ import os
 import subprocess
 from datetime import datetime, timedelta
 
+from src import postable_pool
 from src.common import (
     DAILY_REPORT_STATE_PATH,
     HISTORY_DIR,
@@ -22,7 +23,6 @@ from src.common import (
     POST_HISTORY_DIR,
     REVISIT_REPORT_STATE_PATH,
     load_json,
-    post_topic_summary,
     telegram_enabled,
     telegram_notify,
     write_json,
@@ -126,15 +126,19 @@ def post_daily_limit() -> int:
 
 def post_summary(next_post_run_at: datetime) -> str:
     latest = load_json(LATEST_POST_RUN_PATH, {})
-    queue = post_topic_summary()
+    pool = postable_pool.pool_status()
+    manual = pool["manual"]
+    hotspot = pool["hotspot"]
     today = _beijing_now().strftime("%Y-%m-%d")
     lines = format_header("📝 主动发帖状态")
     lines.extend(
         [
-            format_kv("📥", "queue_pending", queue["pending"]),
-            format_kv("✅", "queue_used", queue["used"]),
-            format_kv("⏭️", "queue_skipped", queue["skipped"]),
-            format_kv("📚", "queue_total", queue["total"]),
+            format_kv("📥", "人工待发", manual["pending"]),
+            format_kv("✅", "人工已用", manual["used"]),
+            format_kv("⏭️", "人工跳过", manual["skipped"]),
+            format_kv("🔥", "热点池(24h)", hotspot["pool_size_24h"]),
+            format_kv("🌱", "今日新发现热点", hotspot["discovered_today"]),
+            format_kv("📤", "今日已发热点", hotspot["posted_today"]),
             format_kv("📅", "今日定时已发", f"{count_scheduled_posts(today)}/{post_daily_limit()}"),
             format_kv("🕒", "下次主动发帖", next_post_run_at.strftime('%Y-%m-%d %H:%M:%S %Z')),
         ]

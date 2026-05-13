@@ -15,7 +15,6 @@ from src.common import (
     BOT_LOCK_PATH,
     ensure_state_dirs,
     load_env_file,
-    post_topic_summary,
     telegram_enabled,
     telegram_notify,
 )
@@ -191,7 +190,6 @@ def main() -> int:
                 run_trigger = "schedule"
                 active_label = "run_once.py"
             elif run_proc is None and now >= next_post_run_at:
-                queue = post_topic_summary()
                 today = now.strftime("%Y-%m-%d")
                 if count_scheduled_posts(today) < post_daily_limit():
                     run_proc = start_job("post_once.py", "schedule")

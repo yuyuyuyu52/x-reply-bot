@@ -61,7 +61,7 @@ def _notify(record: dict) -> None:
         "",
         f"🕒 时间: {record['time_beijing']}",
         f"⚙️ 触发: {record['trigger']}",
-        f"📊 发现: {record['discovered']} 条新热点",
+        f"📊 评估候选: {record['discovered']} 条",
         f"✅ 入库: {record['added']} 条",
         f"⏭️ 已见: {record['skipped_seen']} 条",
         f"❌ 过滤: {record['filtered_out']} 条",
@@ -74,6 +74,16 @@ def _notify(record: dict) -> None:
             stars = "⭐" * max(1, item.get("relevance_score", 3))
             lines.append(f"• {stars} [{item.get('source', '')}] {item.get('cn_summary', '')}")
             lines.append(f"  🎯 {item.get('angle', '')}")
+    elif record.get("filtered_items"):
+        lines.append("")
+        lines.append("🧪 被过滤样例:")
+        for item in record.get("filtered_items", [])[:5]:
+            title = str(item.get("title") or "")[:80]
+            score = item.get("relevance_score", 0)
+            reason = item.get("relevance_reason", "")
+            lines.append(f"• [{item.get('source', '')}] {title} ({score}/5)")
+            if reason:
+                lines.append(f"  {reason}")
     text = "\n".join(lines)
     if len(text) > 3800:
         text = text[:3750] + "\n\n[通知过长，已截断]"
@@ -162,6 +172,7 @@ def main() -> int:
             "source_stats": result.get("source_stats", {}),
             "source_durations": result.get("source_durations", {}),
             "added_items": added_items,
+            "filtered_items": result.get("filtered_items", []),
             "total_cost_cny": result.get("total_cost_cny", 0.0),
         }
         _persist(record, stamp)

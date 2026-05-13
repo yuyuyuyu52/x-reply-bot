@@ -28,8 +28,8 @@ HN_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
 HN_MAX_FETCH = 20
 HOTSPOT_MAX_CANDIDATES = 3
-HOTSPOT_LLM_CANDIDATES = 10
-HOTSPOT_SOURCE_WORKERS = 4
+HOTSPOT_LLM_CANDIDATES = 30
+HOTSPOT_SOURCE_WORKERS = 6
 HOTSPOT_HN_WORKERS = 8
 HOTSPOT_HTTP_TIMEOUT = 8
 PRODUCT_HUNT_GRAPHQL_URL = "https://api.producthunt.com/v2/api/graphql"
@@ -670,7 +670,19 @@ ALL_SOURCES = [
     "google",
 ]
 
-DEFAULT_HOTSPOT_SOURCES = ["hn", "producthunt", "reddit", "hf_papers"]
+DEFAULT_HOTSPOT_SOURCES = [
+    "hn",
+    "producthunt",
+    "reddit",
+    "lobsters",
+    "simonw",
+    "github_trending",
+    "hf_papers",
+    "tldr_ai",
+    "openai",
+    "anthropic",
+    "google",
+]
 
 SOURCE_LABELS = {
     "hn": "HN",
@@ -758,6 +770,26 @@ KEYWORD_BOOSTS = [
     ),
 ]
 
+HIGH_PRIORITY_TOPIC_KEYWORDS = [
+    "vibe coding",
+    "vibe",
+    "claude code",
+    "cursor",
+    "windsurf",
+    "copilot",
+    "agentic",
+    "ai agent",
+    "agents",
+    "coding agent",
+    "developer agent",
+    "openai",
+    "anthropic",
+    "chatgpt",
+    "claude",
+    "gemini",
+    "llm",
+]
+
 
 def _configured_sources() -> list[str]:
     raw = os.environ.get("X_HOTSPOT_SOURCES", "").strip()
@@ -783,6 +815,37 @@ def _int_metric(story: dict, key: str) -> int:
 def _keyword_boost(story: dict) -> int:
     title = str(story.get("title") or "").lower()
     return sum(boost for boost, keywords in KEYWORD_BOOSTS if any(keyword in title for keyword in keywords))
+
+
+def _high_priority_topic_keyword(story: dict) -> str:
+    title = str(story.get("title") or "").lower()
+    for keyword in HIGH_PRIORITY_TOPIC_KEYWORDS:
+        if keyword in title:
+            return keyword
+    return ""
+
+
+def _apply_local_relevance_floor(story: dict, result: dict) -> dict:
+    keyword = _high_priority_topic_keyword(story)
+    if not keyword:
+        return result
+
+    promoted = dict(result)
+    score = int(promoted.get("score") or 0)
+    if promoted.get("relevant") and score >= 3:
+        return promoted
+
+    title = str(story.get("title") or "").strip()
+    promoted["relevant"] = True
+    promoted["score"] = max(score, 3)
+    if not str(promoted.get("reason") or "").strip() or score < 3:
+        promoted["reason"] = f"命中高优先级方向：{keyword}"
+    if not str(promoted.get("angle") or "").strip():
+        promoted["angle"] = "AI工作流变化"
+    if not str(promoted.get("cn_summary") or "").strip():
+        promoted["cn_summary"] = title[:60]
+    promoted["local_floor"] = keyword
+    return promoted
 
 
 def _candidate_rank_score(story: dict) -> float:
@@ -909,6 +972,7 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
     filtered_out = 0
     errors = 0
     relevant_items: list[dict] = []
+    filtered_items: list[dict] = []
 
     for story in top_stories:
         source = story["source"]
@@ -924,6 +988,7 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
                 source, sid, story.get("title", ""), exc,
             )
             continue
+        result = _apply_local_relevance_floor(story, result)
 
         total_cost += float(result["cost"].get("total_cost") or 0.0)
         relevant = result["relevant"] and result["score"] >= 3
@@ -961,6 +1026,13 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
             })
         else:
             filtered_out += 1
+            filtered_items.append({
+                "source": source,
+                "id": sid,
+                "title": story["title"],
+                "relevance_score": result["score"],
+                "relevance_reason": result["reason"],
+            })
 
     relevant_items.sort(
         key=lambda item: (
@@ -988,5 +1060,6 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
         "source_stats": source_stats,
         "source_durations": source_durations,
         "items": items,
+        "filtered_items": filtered_items[:10],
         "total_cost_cny": round(total_cost, 8),
     }

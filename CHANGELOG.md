@@ -16,12 +16,15 @@ omitted unless they alter how the bot is configured or operated.
 
 ### Changed
 - Run hotspot discovery once per day, queue only the top 3 unseen hot candidates for that day's posts
+- Expand default hotspot discovery to all implemented sources and evaluate 30 candidates per run so daily discovery can fill three topics
+- Label Telegram hotspot discovery counts as evaluated candidates and include filtered examples when nothing is queued
 - Speed up hotspot discovery with fast default sources, concurrent fetching, and source-duration diagnostics
 - Rework hotspot sources around HN, Product Hunt, Reddit, and HuggingFace with PRD-weighted local ranking before LLM review
 - Support Product Hunt API Key/Secret client-credentials auth for hotspot discovery
 - Limit Product Hunt hotspot candidates to the latest 24h launches
 
 ### Fixed
+- Prevent high-priority AI workflow topics from being filtered out solely by an under-scored LLM result
 - Fix circular imports that prevented direct entrypoint module startup
 - Prevent Telegram /config from changing process-control variables that can break rollback or duplicate daemon sessions
 - Track /update as the active Telegram job while the detached update script is running

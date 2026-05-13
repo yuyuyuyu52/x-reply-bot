@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from discover_hotspots import _queue_daily_hotspot_topics
+import discover_hotspots
+from discover_hotspots import _notify, _queue_daily_hotspot_topics
 
 
 def test_queue_daily_hotspot_topics_replaces_stale_pending_hotspots_first():
@@ -24,3 +25,28 @@ def test_queue_daily_hotspot_topics_replaces_stale_pending_hotspots_first():
     assert data["topics"][3]["id"] == "hotspot-old"
     assert data["topics"][3]["status"] == "skipped"
     assert data["topics"][4]["id"] == "hotspot-used"
+
+
+def test_notify_labels_discovered_as_candidates_and_includes_filtered_sample(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(discover_hotspots, "telegram_enabled", lambda: True)
+    monkeypatch.setattr(discover_hotspots, "telegram_notify", lambda text: sent.setdefault("text", text))
+
+    _notify({
+        "time_beijing": "2026-05-13 13:23:35 CST",
+        "trigger": "telegram",
+        "discovered": 10,
+        "added": 0,
+        "skipped_seen": 0,
+        "filtered_out": 10,
+        "total_cost_cny": 0.044276,
+        "added_items": [],
+        "filtered_items": [
+            {"source": "hn", "title": "Generic infra topic", "relevance_score": 1, "relevance_reason": "偏基础设施"},
+        ],
+    })
+
+    assert "📊 评估候选: 10 条" in sent["text"]
+    assert "发现: 10 条新热点" not in sent["text"]
+    assert "被过滤样例" in sent["text"]
+    assert "Generic infra topic" in sent["text"]

@@ -11,7 +11,19 @@ from src.hotspot.discover import _configured_sources, _producthunt_access_token,
 def test_configured_sources_default_to_fast_heat_sources(monkeypatch):
     monkeypatch.delenv("X_HOTSPOT_SOURCES", raising=False)
 
-    assert _configured_sources() == ["hn", "producthunt", "reddit", "hf_papers"]
+    assert _configured_sources() == [
+        "hn",
+        "producthunt",
+        "reddit",
+        "lobsters",
+        "simonw",
+        "github_trending",
+        "hf_papers",
+        "tldr_ai",
+        "openai",
+        "anthropic",
+        "google",
+    ]
 
 
 def test_configured_sources_allows_known_overrides_and_dedupes(monkeypatch):
@@ -41,6 +53,71 @@ def test_select_llm_candidates_prioritizes_prd_relevant_hot_items():
         ("reddit", "claude-code"),
         ("hn", "generic"),
     ]
+
+
+def test_discover_evaluates_beyond_top_ten_to_fill_three_hotspots(monkeypatch):
+    monkeypatch.delenv("X_HOTSPOT_LLM_CANDIDATES", raising=False)
+
+    stories = [
+        {"source": "hn", "id": f"generic-{idx}", "title": f"Generic infra topic {idx}", "url": f"https://example.com/g/{idx}", "score": 1000 - idx, "descendants": 20}
+        for idx in range(12)
+    ] + [
+        {"source": "reddit", "id": "claude-code", "title": "New in Claude Code: agent view", "url": "https://example.com/claude", "score": 40, "descendants": 10},
+        {"source": "producthunt", "id": "open-vibe", "title": "Open Vibe: Ship your SaaS with AI", "url": "https://example.com/vibe", "score": 35, "descendants": 8},
+        {"source": "hn", "id": "agentic", "title": "Agentic engineering is changing software teams", "url": "https://example.com/agentic", "score": 30, "descendants": 7},
+    ]
+
+    monkeypatch.setattr(discover, "_configured_sources", lambda: ["hn"])
+    monkeypatch.setattr(discover, "_fetch_source", lambda source: stories)
+    monkeypatch.setattr(discover, "is_seen", lambda source, sid: False)
+    monkeypatch.setattr(discover, "insert_hotspot", lambda **kwargs: None)
+
+    def fake_filter(story):
+        relevant = story["id"] in {"claude-code", "open-vibe", "agentic"}
+        return {
+            "relevant": relevant,
+            "score": 3 if relevant else 1,
+            "reason": "方向匹配" if relevant else "偏基础设施",
+            "angle": "AI工作流变化" if relevant else "",
+            "cn_summary": story["title"][:60] if relevant else "",
+            "cost": {"total_cost": 0},
+            "usage": {},
+        }
+
+    monkeypatch.setattr(discover, "filter_hotspot", fake_filter)
+
+    result = discover.discover_hotspots()
+
+    assert result["discovered"] == 15
+    assert result["added"] == 3
+    assert [item["id"] for item in result["items"]] == ["claude-code", "open-vibe", "agentic"]
+
+
+def test_high_priority_keyword_floor_promotes_under_scored_llm_result():
+    story = {
+        "source": "reddit",
+        "id": "claude-code",
+        "title": "New in Claude Code: agent view",
+        "url": "https://example.com/claude",
+        "score": 120,
+        "descendants": 30,
+    }
+    result = {
+        "relevant": False,
+        "score": 1,
+        "reason": "模型误判",
+        "angle": "",
+        "cn_summary": "",
+        "cost": {"total_cost": 0},
+        "usage": {},
+    }
+
+    promoted = discover._apply_local_relevance_floor(story, result)
+
+    assert promoted["relevant"] is True
+    assert promoted["score"] == 3
+    assert promoted["angle"]
+    assert promoted["cn_summary"]
 
 
 def test_producthunt_source_skips_without_token(monkeypatch):

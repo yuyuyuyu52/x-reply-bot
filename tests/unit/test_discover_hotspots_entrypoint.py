@@ -63,3 +63,6 @@ def test_main_does_not_touch_post_topics_json(tmp_state, monkeypatch):
 
     rc = entry.main()
     assert rc == 0
+    from src.common import POST_TOPICS_PATH
+    assert not POST_TOPICS_PATH.exists(), \
+        "discover_hotspots.main() must not create or write post_topics.json"

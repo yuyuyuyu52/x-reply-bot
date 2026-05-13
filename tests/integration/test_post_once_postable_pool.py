@@ -17,7 +17,6 @@ Regressions locked down:
 """
 from __future__ import annotations
 
-import importlib
 import json
 import sqlite3
 import sys
@@ -28,58 +27,25 @@ from unittest.mock import MagicMock
 import pytest
 
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def post_once_env(tmp_state, monkeypatch):
-    """Retarget downstream modules that captured *_PATH constants at import.
+def post_once_env(tmp_state):
+    """Yield a freshly-imported post_once with state isolated to tmp_state.
 
-    ``tmp_state`` retargets ``src.common`` and a handful of modules listed in
-    conftest. The pool / topics layer captures path constants by name at
-    import time, so we must explicitly rebind them onto the tmp dir or the
-    post_once flow will read/write the real ``state/`` directory.
-
-    We also force a fresh re-import of ``post_once`` so its module-level
-    ``from src.common import ...`` and ``from src.post.handlers_common import ...``
-    bindings pick up the retargeted paths.
+    Why: postable_pool keeps a module-level `_migration_done` flag that
+    leaks across tests; reloading it resets the flag and also re-binds
+    its imported path constants to the retargeted values from tmp_state.
+    post_once is reimported so its top-level `from src.common import …`
+    captures the tmp paths.
     """
-    # Repoint src.topics path bindings.
-    from src import topics as topics_mod
-    monkeypatch.setattr(topics_mod, "POST_TOPICS_PATH",
-                        tmp_state / "post_topics.json", raising=False)
-    monkeypatch.setattr(topics_mod, "POST_TOPICS_LOCK_PATH",
-                        tmp_state / "post_topics.lock", raising=False)
-
-    # Repoint src.postable_pool lock binding + reset the module-level
-    # _migration_done flag (it would otherwise leak across tests in the
-    # same process).
+    import importlib
     import src.postable_pool as pool_mod
     importlib.reload(pool_mod)
-    monkeypatch.setattr(pool_mod, "POST_TOPICS_LOCK_PATH",
-                        tmp_state / "post_topics.lock", raising=False)
-    pool_mod._migration_done = False
-
-    # Repoint src.persona_store paths so add_recent_post writes don't
-    # touch real state.
-    import src.persona_store as persona_mod
-    monkeypatch.setattr(persona_mod, "PERSONA_PATH",
-                        tmp_state / "persona.json", raising=False)
-    monkeypatch.setattr(persona_mod, "PERSONA_LOCK_PATH",
-                        tmp_state / "persona.lock", raising=False)
-
-    # Force fresh re-import of post_once so its top-level
-    # ``from src.common import LATEST_POST_RUN_PATH, ...`` bindings
-    # land on the retargeted paths.
-    if "post_once" in sys.modules:
-        del sys.modules["post_once"]
+    sys.modules.pop("post_once", None)
     import post_once
     return post_once
 

@@ -95,6 +95,14 @@ class ConfigManagerTests(unittest.TestCase):
         self.cm.stage_or_apply_config("X_POST_SCHEDULE_HOURS", "19, 11,11", apply_func=lambda *_: None)
         self.assertIn('X_POST_SCHEDULE_HOURS="11,19"', self.env_path.read_text(encoding="utf-8"))
 
+    def test_time_validation_normalizes_hotspot_schedule_time(self):
+        self.cm.stage_or_apply_config("X_HOTSPOT_SCHEDULE_TIME", "7:05", apply_func=lambda *_: None)
+        self.assertIn('X_HOTSPOT_SCHEDULE_TIME="07:05"', self.env_path.read_text(encoding="utf-8"))
+
+    def test_time_validation_rejects_invalid_hotspot_schedule_time(self):
+        with self.assertRaises(ValueError):
+            self.cm.stage_or_apply_config("X_HOTSPOT_SCHEDULE_TIME", "25:00", apply_func=lambda *_: None)
+
     def test_unset_removes_active_key_and_preserves_comment(self):
         self.cm.unset_config("X_POST_DAILY_LIMIT", apply_func=lambda *_: None)
         content = self.env_path.read_text(encoding="utf-8")

@@ -9,6 +9,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -69,6 +70,25 @@ class ProactiveScheduleTests(unittest.TestCase):
     def test_next_proactive_after_rolls_to_next_day(self):
         slot = bd.next_proactive_after(at(20, 0))
         self.assertEqual(slot, at(11, 0, day=6))
+
+
+class HotspotScheduleTests(unittest.TestCase):
+    def test_next_hotspot_after_defaults_to_today_0730(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("X_HOTSPOT_SCHEDULE_TIME", None)
+            slot = bd.next_hotspot_after(at(2, 0))
+        self.assertEqual(slot, at(7, 30))
+
+    def test_next_hotspot_after_rolls_to_tomorrow_after_daily_slot(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("X_HOTSPOT_SCHEDULE_TIME", None)
+            slot = bd.next_hotspot_after(at(8, 0))
+        self.assertEqual(slot, at(7, 30, day=6))
+
+    def test_next_hotspot_after_uses_configured_daily_time(self):
+        with patch.dict(os.environ, {"X_HOTSPOT_SCHEDULE_TIME": "06:15"}):
+            slot = bd.next_hotspot_after(at(2, 0))
+        self.assertEqual(slot, at(6, 15))
 
 
 class ReplyScheduleTests(unittest.TestCase):

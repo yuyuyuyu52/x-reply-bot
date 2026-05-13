@@ -131,11 +131,17 @@ def hotspot_enabled() -> bool:
     return os.environ.get("X_HOTSPOT_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
-def hotspot_interval_seconds() -> int:
+def hotspot_schedule_time() -> tuple[int, int]:
+    raw = os.environ.get("X_HOTSPOT_SCHEDULE_TIME", "07:30").strip()
     try:
-        return max(600, int(os.environ.get("X_HOTSPOT_INTERVAL_SECONDS", "7200")))
+        hour_text, minute_text = raw.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
     except ValueError:
-        return 7200
+        return 7, 30
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return hour, minute
+    return 7, 30
 
 
 def hotspot_guard_seconds() -> int:
@@ -146,4 +152,8 @@ def hotspot_guard_seconds() -> int:
 
 
 def next_hotspot_after(now: datetime) -> datetime:
-    return now + timedelta(seconds=hotspot_interval_seconds())
+    hour, minute = hotspot_schedule_time()
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate > now:
+        return candidate
+    return candidate + timedelta(days=1)

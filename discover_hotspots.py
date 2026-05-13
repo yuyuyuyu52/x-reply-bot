@@ -37,6 +37,21 @@ def _persist(record: dict, stamp: str) -> None:
     write_json(HOTSPOT_HISTORY_DIR / f"{stamp}.json", record)
 
 
+def _queue_daily_hotspot_topics(data: dict, new_topics: list[dict]) -> int:
+    topics = data.setdefault("topics", [])
+    skipped = 0
+    for item in topics:
+        if (item.get("source") or "") != "hotspot":
+            continue
+        if (item.get("status") or "pending") != "pending":
+            continue
+        item["status"] = "skipped"
+        item["skip_reason"] = "superseded_by_daily_hotspots"
+        skipped += 1
+    data["topics"] = [*new_topics, *topics]
+    return skipped
+
+
 def _notify(record: dict) -> None:
     if not telegram_enabled():
         return
@@ -109,7 +124,7 @@ def main() -> int:
         added_items: list[dict] = []
         if items and not args.dry_run:
             data = load_post_topics()
-            topics = data.setdefault("topics", [])
+            new_topics: list[dict] = []
             for item in items:
                 topic = normalize_post_topic({
                     "id": f"hotspot-{item['source']}-{item['id']}",
@@ -122,7 +137,7 @@ def main() -> int:
                     "stance": item["angle"],
                     "evidence_hint": f"热度: {item['hn_score']}↑ {item['hn_descendants']}💬 | 相关度: {item['relevance_score']}/5",
                 })
-                topics.append(topic)
+                new_topics.append(topic)
                 mark_added_to_queue(item["source"], item["id"])
                 added_items.append({
                     "source": item["source"],
@@ -131,6 +146,7 @@ def main() -> int:
                     "angle": item["angle"],
                     "relevance_score": item["relevance_score"],
                 })
+            _queue_daily_hotspot_topics(data, new_topics)
             save_post_topics(data)
 
         record = {
@@ -143,6 +159,8 @@ def main() -> int:
             "added": result.get("added", 0),
             "skipped_seen": result.get("skipped_seen", 0),
             "filtered_out": result.get("filtered_out", 0),
+            "source_stats": result.get("source_stats", {}),
+            "source_durations": result.get("source_durations", {}),
             "added_items": added_items,
             "total_cost_cny": result.get("total_cost_cny", 0.0),
         }

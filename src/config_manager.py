@@ -71,7 +71,14 @@ CONFIG_SPECS: dict[str, ConfigSpec] = {
         _spec("X_LEARN_INTERVAL_SECONDS", "Learning", "观察学习间隔秒数", kind="int", default="900", min_value=300),
         _spec("X_LEARN_GUARD_SECONDS", "Learning", "观察学习保护间隔秒数", kind="int", default="600", min_value=60),
         _spec("X_HOTSPOT_ENABLED", "Hotspot", "热点发现开关", kind="bool", default="1"),
-        _spec("X_HOTSPOT_INTERVAL_SECONDS", "Hotspot", "热点发现间隔秒数", kind="int", default="7200", min_value=600),
+        _spec("X_HOTSPOT_SCHEDULE_TIME", "Hotspot", "每日热点发现时间", kind="time", default="07:30"),
+        _spec("X_HOTSPOT_SOURCES", "Hotspot", "热点数据源", default="hn,producthunt,reddit,hf_papers"),
+        _spec("X_HOTSPOT_LLM_CANDIDATES", "Hotspot", "热点 LLM 评估候选数", kind="int", default="10", min_value=3),
+        _spec("X_PRODUCT_HUNT_TOKEN", "Hotspot", "Product Hunt API Token", sensitive=True),
+        _spec("X_PRODUCT_HUNT_API_KEY", "Hotspot", "Product Hunt API Key", sensitive=True),
+        _spec("X_PRODUCT_HUNT_API_SECRET", "Hotspot", "Product Hunt API Secret", sensitive=True),
+        _spec("X_HOTSPOT_ENABLE_X_SCRAPE", "Hotspot", "允许抓取 X 公司账号", kind="bool", default="0"),
+        _spec("X_HOTSPOT_X_SCRAPE_TIMEOUT", "Hotspot", "X 抓取超时秒数", kind="int", default="25", min_value=10),
         _spec("X_HOTSPOT_GUARD_SECONDS", "Hotspot", "热点发现保护间隔秒数", kind="int", default="600", min_value=60),
         _spec("X_HOTSPOT_DAILY_LIMIT", "Hotspot", "热点每日发帖上限", kind="int", default="3", min_value=1),
         _spec("GIPHY_API_KEY", "Media", "GIPHY API Key", sensitive=True),
@@ -220,6 +227,16 @@ def validate_value(spec: ConfigSpec, value: str) -> str:
         if not hours:
             raise ValueError(f"{spec.key} 不能为空")
         return ",".join(str(h) for h in sorted(set(hours)))
+    if spec.kind == "time":
+        try:
+            hour_text, minute_text = value.split(":", 1)
+            hour = int(hour_text)
+            minute = int(minute_text)
+        except ValueError as exc:
+            raise ValueError(f"{spec.key} 需要 HH:MM 格式，例如 07:30") from exc
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError(f"{spec.key} 时间必须在 00:00-23:59 之间")
+        return f"{hour:02d}:{minute:02d}"
     if spec.kind == "url":
         if not re.match(r"^https?://", value):
             raise ValueError(f"{spec.key} 需要 http:// 或 https:// 地址")

@@ -14,6 +14,13 @@ omitted unless they alter how the bot is configured or operated.
 - Add /review and /rate Telegram commands for human feedback scoring on replies and proactive posts
 - Feedback scores injected into reply and post generation prompts as style reference
 
+### Changed
+- Run hotspot discovery once per day, queue only the top 3 unseen hot candidates for that day's posts
+- Speed up hotspot discovery with fast default sources, concurrent fetching, and source-duration diagnostics
+- Rework hotspot sources around HN, Product Hunt, Reddit, and HuggingFace with PRD-weighted local ranking before LLM review
+- Support Product Hunt API Key/Secret client-credentials auth for hotspot discovery
+- Limit Product Hunt hotspot candidates to the latest 24h launches
+
 ### Fixed
 - Fix circular imports that prevented direct entrypoint module startup
 - Prevent Telegram /config from changing process-control variables that can break rollback or duplicate daemon sessions

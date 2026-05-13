@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
-import textwrap
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from typing import Callable
 
 from src.common import chat_json_result
 from src.hotspot.store import is_seen, insert_hotspot
@@ -23,14 +26,21 @@ logger = get_logger(__name__)
 
 HN_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
-HN_MAX_FETCH = 30
+HN_MAX_FETCH = 20
+HOTSPOT_MAX_CANDIDATES = 3
+HOTSPOT_LLM_CANDIDATES = 10
+HOTSPOT_SOURCE_WORKERS = 4
+HOTSPOT_HN_WORKERS = 8
+HOTSPOT_HTTP_TIMEOUT = 8
+PRODUCT_HUNT_GRAPHQL_URL = "https://api.producthunt.com/v2/api/graphql"
+PRODUCT_HUNT_TOKEN_URL = "https://api.producthunt.com/v2/oauth/token"
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 REDDIT_SUBREDDITS = [
     "ChatGPTCoding",
     "ClaudeAI",
-    "artificial",
-    "programming",
-    "startups",
+    "LocalLLaMA",
+    "vibecoding",
 ]
 
 LOBSTERS_HOTTEST_URL = "https://lobste.rs/hottest.json"
@@ -70,7 +80,7 @@ UA_GENERIC = "Mozilla/5.0 (compatible; x-reply-bot/1.0)"
 UA_REDDIT = "python:x-reply-bot:v1.0 (by /u/indiedev)"
 
 
-def _http_get(url: str, timeout: int = 15, retries: int = 3, ua: str | None = None) -> bytes:
+def _http_get(url: str, timeout: int = HOTSPOT_HTTP_TIMEOUT, retries: int = 1, ua: str | None = None) -> bytes:
     headers = {"User-Agent": ua or UA_GENERIC}
     if retries < 1:
         retries = 1
@@ -91,6 +101,13 @@ def _http_get_json(url: str, timeout: int = 15, ua: str | None = None) -> dict |
     return json.loads(_http_get(url, timeout, ua=ua).decode())
 
 
+def _env_int(name: str, default: int, min_value: int = 1) -> int:
+    try:
+        return max(min_value, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Fetch functions
 # ---------------------------------------------------------------------------
@@ -102,21 +119,31 @@ def fetch_hn_top_stories(limit: int = HN_MAX_FETCH) -> list[dict]:
     if not isinstance(ids, list):
         logger.warning("hn: topstories returned non-list: %r", ids)
         return []
-    stories: list[dict] = []
-    for sid in ids[:limit]:
+    selected_ids = ids[:limit]
+
+    def _fetch_item(sid) -> dict | None:
         try:
             item = _http_get_json(HN_ITEM_URL.format(sid))
         except Exception:
-            continue
+            return None
         if not item or not item.get("title"):
-            continue
-        stories.append({
+            return None
+        return {
             "id": str(item.get("id", "")),
             "title": item.get("title", ""),
             "url": item.get("url") or f"https://news.ycombinator.com/item?id={item['id']}",
             "score": item.get("score", 0),
             "descendants": item.get("descendants", 0),
-        })
+        }
+
+    stories: list[dict] = []
+    if selected_ids:
+        with ThreadPoolExecutor(max_workers=min(HOTSPOT_HN_WORKERS, len(selected_ids))) as executor:
+            futures = [executor.submit(_fetch_item, sid) for sid in selected_ids]
+            for future in as_completed(futures):
+                item = future.result()
+                if item:
+                    stories.append(item)
     logger.info("hn: got %d stories", len(stories))
     return stories
 
@@ -274,6 +301,100 @@ def fetch_hf_papers(limit: int = 10) -> list[dict]:
     return posts
 
 
+def _producthunt_access_token() -> str:
+    token = (os.environ.get("X_PRODUCT_HUNT_TOKEN") or os.environ.get("PRODUCT_HUNT_TOKEN") or "").strip()
+    if token:
+        return token
+    client_id = (os.environ.get("X_PRODUCT_HUNT_API_KEY") or "").strip()
+    client_secret = (os.environ.get("X_PRODUCT_HUNT_API_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        return ""
+    body = json.dumps(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        PRODUCT_HUNT_TOKEN_URL,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": UA_GENERIC,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HOTSPOT_HTTP_TIMEOUT) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.warning("producthunt: token request failed: %s", exc)
+        return ""
+    return str(payload.get("access_token") or "").strip()
+
+
+def fetch_producthunt_posts(limit: int = 20) -> list[dict]:
+    access_token = _producthunt_access_token()
+    if not access_token:
+        logger.info("producthunt: skipped (missing token or client credentials)")
+        return []
+    query = """
+query DailyPosts($first: Int!, $postedAfter: DateTime!) {
+  posts(first: $first, order: VOTES, postedAfter: $postedAfter) {
+    edges {
+      node {
+        id
+        name
+        tagline
+        url
+        votesCount
+        commentsCount
+      }
+    }
+  }
+}
+"""
+    posted_after = (datetime.now(tz=BEIJING_TZ) - timedelta(hours=24)).replace(microsecond=0).isoformat()
+    body = json.dumps({"query": query, "variables": {"first": limit, "postedAfter": posted_after}}).encode("utf-8")
+    req = urllib.request.Request(
+        PRODUCT_HUNT_GRAPHQL_URL,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "User-Agent": UA_GENERIC,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HOTSPOT_HTTP_TIMEOUT) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.warning("producthunt: fetch failed: %s", exc)
+        return []
+    edges = (((payload or {}).get("data") or {}).get("posts") or {}).get("edges") or []
+    posts = []
+    for edge in edges:
+        node = (edge or {}).get("node") or {}
+        name = str(node.get("name") or "").strip()
+        tagline = str(node.get("tagline") or "").strip()
+        pid = str(node.get("id") or name).strip()
+        if not name or not pid:
+            continue
+        title = f"{name}: {tagline}" if tagline else name
+        posts.append({
+            "id": pid,
+            "title": title,
+            "url": node.get("url") or "https://www.producthunt.com/",
+            "score": node.get("votesCount", 0),
+            "descendants": node.get("commentsCount", 0),
+        })
+    logger.info("producthunt: got %d posts", len(posts))
+    return posts
+
+
 def fetch_tldr_ai(limit: int = 15) -> list[dict]:
     try:
         body = _http_get(TLDR_AI_URL, timeout=15).decode()
@@ -375,6 +496,8 @@ def _fetch_company_blog_rss(url: str, label: str, limit: int = 10) -> list[dict]
 
 def _fetch_company_x_profile(company: str, limit: int = 10) -> list[dict]:
     """Scrape recent tweets from an X company profile via browser-harness."""
+    if os.environ.get("X_HOTSPOT_ENABLE_X_SCRAPE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        return []
     from src.common import run_harness
     cfg = COMPANY_X_ACCOUNTS.get(company)
     if not cfg:
@@ -405,7 +528,8 @@ def _fetch_company_x_profile(company: str, limit: int = 10) -> list[dict]:
         f'print(tweets_json)\n'
     )
     try:
-        stdout = run_harness(code, timeout=60)
+        timeout = max(10, int(os.environ.get("X_HOTSPOT_X_SCRAPE_TIMEOUT", "25")))
+        stdout = run_harness(code, timeout=timeout)
         tweets = json.loads(stdout.strip())
     except Exception as exc:
         logger.warning("company %s: X scrape failed: %s", label, exc)
@@ -533,6 +657,7 @@ def filter_hotspot(story: dict) -> dict:
 ALL_SOURCES = [
     # Community
     "hn",
+    "producthunt",
     "reddit",
     "lobsters",
     "simonw",
@@ -545,8 +670,11 @@ ALL_SOURCES = [
     "google",
 ]
 
+DEFAULT_HOTSPOT_SOURCES = ["hn", "producthunt", "reddit", "hf_papers"]
+
 SOURCE_LABELS = {
     "hn": "HN",
+    "producthunt": "Product Hunt",
     "reddit": "Reddit",
     "lobsters": "Lobsters",
     "simonw": "Simon Willison",
@@ -558,6 +686,139 @@ SOURCE_LABELS = {
     "google": "Google AI",
 }
 
+SOURCE_WEIGHTS = {
+    "producthunt": 2.3,
+    "hn": 1.2,
+    "reddit": 1.15,
+    "lobsters": 0.8,
+    "hf_papers": 0.55,
+    "tldr_ai": 0.65,
+    "github_trending": 0.6,
+    "simonw": 0.5,
+    "openai": 1.1,
+    "anthropic": 1.1,
+    "google": 1.0,
+}
+
+KEYWORD_BOOSTS = [
+    (
+        180,
+        [
+            "vibe coding",
+            "claude code",
+            "cursor",
+            "windsurf",
+            "copilot",
+            "ai coding",
+            "agent workflow",
+            "coding agent",
+            "code agent",
+            "developer agent",
+        ],
+    ),
+    (
+        130,
+        [
+            "ai agent",
+            "agents",
+            "workflow automation",
+            "ai workflow",
+            "llm app",
+            "low-code",
+            "nocode",
+            "no-code",
+        ],
+    ),
+    (
+        80,
+        [
+            "llm",
+            "openai",
+            "anthropic",
+            "claude",
+            "chatgpt",
+            "model",
+            "automation",
+            "developer tool",
+            "devtool",
+        ],
+    ),
+    (
+        40,
+        [
+            "startup",
+            "growth",
+            "product",
+            "crypto",
+            "web3",
+            "fintech",
+            "semiconductor",
+            "creator",
+        ],
+    ),
+]
+
+
+def _configured_sources() -> list[str]:
+    raw = os.environ.get("X_HOTSPOT_SOURCES", "").strip()
+    if not raw:
+        return list(DEFAULT_HOTSPOT_SOURCES)
+    allowed = set(ALL_SOURCES)
+    selected: list[str] = []
+    for part in raw.split(","):
+        source = part.strip().lower()
+        if not source or source not in allowed or source in selected:
+            continue
+        selected.append(source)
+    return selected or list(DEFAULT_HOTSPOT_SOURCES)
+
+
+def _int_metric(story: dict, key: str) -> int:
+    try:
+        return int(story.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _keyword_boost(story: dict) -> int:
+    title = str(story.get("title") or "").lower()
+    return sum(boost for boost, keywords in KEYWORD_BOOSTS if any(keyword in title for keyword in keywords))
+
+
+def _candidate_rank_score(story: dict) -> float:
+    source = str(story.get("source") or "")
+    engagement = _int_metric(story, "score") + (_int_metric(story, "descendants") * 2)
+    return (engagement * SOURCE_WEIGHTS.get(source, 0.7)) + _keyword_boost(story)
+
+
+def _candidate_sort_key(story: dict) -> tuple[float, int, int, str, str, str]:
+    return (
+        -_candidate_rank_score(story),
+        -_int_metric(story, "score"),
+        -_int_metric(story, "descendants"),
+        str(story.get("source") or ""),
+        str(story.get("id") or ""),
+        str(story.get("title") or ""),
+    )
+
+
+def _select_llm_candidates(
+    stories: list[dict],
+    *,
+    limit: int = HOTSPOT_LLM_CANDIDATES,
+    is_seen_func: Callable[[str, str], bool] = is_seen,
+) -> tuple[list[dict], int]:
+    unseen: list[dict] = []
+    skipped_seen = 0
+    for story in stories:
+        source = str(story.get("source") or "")
+        sid = str(story.get("id") or "")
+        if is_seen_func(source, sid):
+            skipped_seen += 1
+            continue
+        unseen.append(story)
+    return sorted(unseen, key=_candidate_sort_key)[:limit], skipped_seen
+
 
 def _fetch_source(source: str) -> list[dict]:
     """Fetch stories from a single source. Returns list of {source, id, title, url, score, descendants}."""
@@ -567,13 +828,18 @@ def _fetch_source(source: str) -> list[dict]:
         stories = fetch_hn_top_stories()
         return [{"source": source, **s} for s in stories]
 
+    elif source == "producthunt":
+        stories = fetch_producthunt_posts()
+
     elif source == "reddit":
-        for sub in REDDIT_SUBREDDITS:
-            try:
-                items = fetch_reddit_hot(sub)
-                stories.extend(items)
-            except Exception as exc:
-                logger.warning("reddit r/%s fetch failed: %s", sub, exc)
+        with ThreadPoolExecutor(max_workers=len(REDDIT_SUBREDDITS)) as executor:
+            future_to_sub = {executor.submit(fetch_reddit_hot, sub, 12): sub for sub in REDDIT_SUBREDDITS}
+            for future in as_completed(future_to_sub):
+                sub = future_to_sub[future]
+                try:
+                    stories.extend(future.result())
+                except Exception as exc:
+                    logger.warning("reddit r/%s fetch failed: %s", sub, exc)
 
     elif source == "lobsters":
         try:
@@ -601,40 +867,52 @@ def _fetch_source(source: str) -> list[dict]:
 
 def discover_hotspots(sources: list[str] | None = None) -> dict:
     if sources is None:
-        sources = ALL_SOURCES
+        sources = _configured_sources()
 
     all_stories: list[dict] = []
     total_cost = 0.0
     source_stats: dict[str, int] = {}
+    source_durations: dict[str, float] = {}
 
-    for source in sources:
+    def _fetch_timed(source: str) -> tuple[str, list[dict], float]:
         label = SOURCE_LABELS.get(source, source)
+        started = time.time()
         try:
             logger.info("discover: fetching %s", label)
             items = _fetch_source(source)
-            all_stories.extend(items)
-            source_stats[source] = len(items)
-            logger.info("discover: %s → %d items", label, len(items))
+            elapsed = time.time() - started
+            logger.info("discover: %s → %d items in %.2fs", label, len(items), elapsed)
+            return source, items, elapsed
         except Exception as exc:
             logger.error("discover: %s fetch failed: %s", label, exc)
-            source_stats[source] = -1
-            # Continue with other sources; don't abort the whole run
+            return source, [], time.time() - started
+
+    with ThreadPoolExecutor(max_workers=min(HOTSPOT_SOURCE_WORKERS, max(1, len(sources)))) as executor:
+        future_to_source = {executor.submit(_fetch_timed, source): source for source in sources}
+        for future in as_completed(future_to_source):
+            source, items, elapsed = future.result()
+            source_stats[source] = len(items)
+            source_durations[source] = round(elapsed, 3)
+            all_stories.extend(items)
 
     logger.info("discover: %d sources → %d total stories", len(sources), len(all_stories))
 
+    llm_limit = _env_int("X_HOTSPOT_LLM_CANDIDATES", HOTSPOT_LLM_CANDIDATES, min_value=HOTSPOT_MAX_CANDIDATES)
+    top_stories, skipped_seen = _select_llm_candidates(all_stories, limit=llm_limit)
+    logger.info(
+        "discover: selected top %d unseen candidates from %d total stories",
+        len(top_stories), len(all_stories),
+    )
+
     discovered = 0
     added = 0
-    skipped_seen = 0
     filtered_out = 0
     errors = 0
-    items: list[dict] = []
+    relevant_items: list[dict] = []
 
-    for story in all_stories:
+    for story in top_stories:
         source = story["source"]
         sid = story["id"]
-        if is_seen(source, sid):
-            skipped_seen += 1
-            continue
 
         discovered += 1
         try:
@@ -668,14 +946,14 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
         )
 
         if relevant:
-            added += 1
-            items.append({
+            relevant_items.append({
                 "source": source,
                 "id": sid,
                 "title": story["title"],
                 "url": story["url"],
                 "hn_score": story.get("score", 0),
                 "hn_descendants": story.get("descendants", 0),
+                "rank_score": round(_candidate_rank_score(story), 3),
                 "relevance_score": result["score"],
                 "relevance_reason": result["reason"],
                 "angle": result["angle"],
@@ -683,6 +961,17 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
             })
         else:
             filtered_out += 1
+
+    relevant_items.sort(
+        key=lambda item: (
+            -int(item.get("relevance_score") or 0),
+            -float(item.get("rank_score") or 0.0),
+            str(item.get("source") or ""),
+            str(item.get("id") or ""),
+        )
+    )
+    items = relevant_items[:HOTSPOT_MAX_CANDIDATES]
+    added = len(items)
 
     logger.info(
         "discover: done discovered=%d added=%d skipped=%d filtered=%d errors=%d cost=%.6f",
@@ -697,6 +986,7 @@ def discover_hotspots(sources: list[str] | None = None) -> dict:
         "filtered_out": filtered_out,
         "errors": errors,
         "source_stats": source_stats,
+        "source_durations": source_durations,
         "items": items,
         "total_cost_cny": round(total_cost, 8),
     }

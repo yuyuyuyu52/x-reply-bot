@@ -76,8 +76,11 @@ def mark_topic_used(topic: dict, status: str = "used", extra: dict | None = None
         return
 
     if pool == "hotspot":
-        if status != "used":
-            return  # hotspot store only records successful consumption.
+        # "used" = posted successfully. "skipped" = LLM rewrite-review rejected
+        # content (permanent — don't re-pick). Other statuses (e.g. send_failed)
+        # are transient → leave posted_at empty so the row stays in the pool.
+        if status not in ("used", "skipped"):
+            return
         ref = str(topic.get("_pool_ref") or "")
         if ":" not in ref:
             logger.warning("postable_pool: bad _pool_ref %r for hotspot topic %s", ref, topic.get("id"))

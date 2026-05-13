@@ -91,6 +91,16 @@ def test_mark_topic_used_hotspot_ignores_non_used_status(pool, monkeypatch):
     spy_store.assert_not_called()
 
 
+def test_mark_topic_used_hotspot_dispatches_skipped_to_store(pool, monkeypatch):
+    """Skipped (e.g. LLM rewrite review rejected) marks hotspot as consumed
+    too — otherwise it'd be re-picked next run and burn LLM cost."""
+    spy_store = MagicMock()
+    monkeypatch.setattr(pool.hotspot_store, "mark_posted", spy_store)
+    topic = {"id": "hotspot-hn-9", "_pool": "hotspot", "_pool_ref": "hn:9"}
+    pool.mark_topic_used(topic, status="skipped")
+    spy_store.assert_called_once_with("hn", "9")
+
+
 def test_mark_topic_used_missing_pool_field_warns_and_noops(pool, monkeypatch, caplog):
     spy_store = MagicMock()
     spy_topics = MagicMock()

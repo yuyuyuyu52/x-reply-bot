@@ -76,6 +76,13 @@ def _get_job(conn: sqlite3.Connection, job_id: int) -> dict:
     return dict(row)
 
 
+def _invalid_transition_error(conn: sqlite3.Connection, job_id: int, action: str, expected_status: str) -> ValueError:
+    row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if row is None:
+        return ValueError(f"cannot {action} job {job_id}: job not found; expected {expected_status}")
+    return ValueError(f"cannot {action} job {job_id}: status is {row['status']}; expected {expected_status}")
+
+
 def enqueue_job(
     kind: str,
     label: str,
@@ -154,14 +161,17 @@ def claim_next_job(now: datetime | None = None) -> dict | None:
 def mark_started(job_id: int, pid: int, output_path: str | Path, started_at: datetime | None = None) -> dict:
     now_text = _now_text(started_at)
     with closing(_connect()) as conn:
-        conn.execute(
+        cur = conn.execute(
             """
             UPDATE jobs
             SET pid = ?, output_path = ?, started_at = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'running'
             """,
             (pid, str(output_path), now_text, now_text, job_id),
         )
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise _invalid_transition_error(conn, job_id, "mark started", "running")
         conn.commit()
         return _get_job(conn, job_id)
 
@@ -177,14 +187,17 @@ def mark_finished(
         raise ValueError(f"invalid final status: {status}")
     now_text = _now_text(finished_at)
     with closing(_connect()) as conn:
-        conn.execute(
+        cur = conn.execute(
             """
             UPDATE jobs
             SET status = ?, exit_code = ?, finished_at = ?, error_summary = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'running'
             """,
             (status, exit_code, now_text, error_summary, now_text, job_id),
         )
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise _invalid_transition_error(conn, job_id, f"mark finished as {status}", "running")
         conn.commit()
         return _get_job(conn, job_id)
 

@@ -89,6 +89,40 @@ class JobStoreTests(unittest.TestCase):
         self.assertEqual(recent[0]["exit_code"], 0)
         self.assertEqual(recent[0]["status"], "succeeded")
 
+    def test_mark_finished_rejects_queued_job(self):
+        job = job_store.enqueue_job("reply", "run_once.py", ["python", "run_once.py"], "telegram", created_at=at(9))
+
+        with self.assertRaisesRegex(ValueError, "expected running"):
+            job_store.mark_finished(job["id"], status="succeeded", exit_code=0, finished_at=at(9, 1))
+
+        queued = job_store.queued_jobs(limit=10)
+        self.assertEqual(queued[0]["id"], job["id"])
+        self.assertEqual(queued[0]["status"], "queued")
+
+    def test_late_success_cannot_overwrite_timed_out_job(self):
+        job = job_store.enqueue_job("reply", "run_once.py", ["python", "run_once.py"], "telegram", created_at=at(9))
+        claimed = job_store.claim_next_job(at(9, 1))
+        job_store.mark_timed_out(claimed["id"], finished_at=at(9, 2), error_summary="timeout")
+
+        with self.assertRaisesRegex(ValueError, "expected running"):
+            job_store.mark_finished(claimed["id"], status="succeeded", exit_code=0, finished_at=at(9, 3))
+
+        recent = job_store.recent_jobs(["timed_out", "succeeded"], limit=1)
+        self.assertEqual(recent[0]["id"], job["id"])
+        self.assertEqual(recent[0]["status"], "timed_out")
+        self.assertIsNone(recent[0]["exit_code"])
+
+    def test_mark_started_rejects_queued_job(self):
+        job = job_store.enqueue_job("reply", "run_once.py", ["python", "run_once.py"], "telegram", created_at=at(9))
+
+        with self.assertRaisesRegex(ValueError, "expected running"):
+            job_store.mark_started(job["id"], pid=123, output_path="state/logs/job-1.log", started_at=at(9, 1))
+
+        queued = job_store.queued_jobs(limit=10)
+        self.assertEqual(queued[0]["id"], job["id"])
+        self.assertEqual(queued[0]["pid"], 0)
+        self.assertEqual(queued[0]["output_path"], "")
+
     def test_has_pending_or_running(self):
         self.assertFalse(job_store.has_pending_or_running("reply", trigger="schedule"))
         job_store.enqueue_job("reply", "run_once.py", ["python", "run_once.py"], "schedule", created_at=at(9))

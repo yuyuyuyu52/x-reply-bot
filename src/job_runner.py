@@ -67,9 +67,18 @@ class JobRunner:
         self._output_fh = output_fh
         try:
             self.job = job_store.mark_started(int(job["id"]), proc.pid, output_path, now)
-        except Exception:
-            self._terminate_process_tree(proc)
-            self._clear_state()
+        except Exception as exc:
+            try:
+                self._terminate_process_tree(proc)
+                job_store.mark_finished(
+                    int(job["id"]),
+                    "interrupted",
+                    None,
+                    now,
+                    f"mark_started failed: {exc}",
+                )
+            finally:
+                self._clear_state()
             raise
 
     def _check_running(self, now: datetime) -> None:

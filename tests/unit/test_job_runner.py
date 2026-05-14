@@ -135,6 +135,10 @@ class JobRunnerTests(unittest.TestCase):
         self.assertIsNone(runner.proc)
         self.assertIsNone(runner.job)
         self.assertIsNone(runner._output_fh)
+        self.assertIsNone(job_store.active_job())
+        recent = job_store.recent_jobs(["interrupted", "failed"], limit=1)
+        self.assertEqual(recent[0]["label"], "run_once.py")
+        self.assertIn("mark_started failed: guard failed", recent[0]["error_summary"])
         queued = job_store.queued_jobs(limit=10)
         self.assertEqual([job["label"] for job in queued], ["post_once.py"])
 

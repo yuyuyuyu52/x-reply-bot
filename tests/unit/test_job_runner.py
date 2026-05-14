@@ -164,6 +164,72 @@ class JobRunnerTests(unittest.TestCase):
         self.assertIn("setup failed", recent[0]["error_summary"])
         self.assertIn("disk full", recent[0]["error_summary"])
 
+    def test_failed_job_sends_failure_notification(self):
+        job_store.enqueue_job(
+            "reply",
+            "run_once.py",
+            [sys.executable, "-c", "print('bad'); raise SystemExit(2)"],
+            "schedule",
+            created_at=at(9),
+        )
+        with (
+            patch("src.job_runner.telegram_enabled", return_value=True),
+            patch("src.job_runner.telegram_notify") as notify,
+        ):
+            runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
+            runner.tick(at(9, 1))
+            runner.tick(at(9, 2))
+        notify.assert_called_once()
+        text = notify.call_args.args[0]
+        self.assertIn("任务失败", text)
+        self.assertIn("exit_code", text)
+        self.assertIn("bad", text)
+
+    def test_timed_out_job_sends_failure_notification(self):
+        job_store.enqueue_job(
+            "reply",
+            "run_once.py",
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            "schedule",
+            timeout_seconds=1,
+            created_at=at(9),
+        )
+        proc = MagicMock()
+        proc.pid = 456
+        proc.poll.return_value = None
+        proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="job", timeout=0.1), 0]
+
+        with (
+            patch("src.job_runner.subprocess.Popen", return_value=proc),
+            patch("src.job_runner.os.getpgid", return_value=456),
+            patch("src.job_runner.os.killpg"),
+            patch("src.job_runner.telegram_enabled", return_value=True),
+            patch("src.job_runner.telegram_notify") as notify,
+        ):
+            runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
+            runner.tick(at(9, 0))
+            runner.tick(at(9, 0, 2))
+        notify.assert_called_once()
+        self.assertIn("任务失败", notify.call_args.args[0])
+        self.assertIn("timed_out", notify.call_args.args[0])
+
+    def test_succeeded_job_does_not_send_notification(self):
+        job_store.enqueue_job(
+            "reply",
+            "run_once.py",
+            [sys.executable, "-c", "print('ok')"],
+            "schedule",
+            created_at=at(9),
+        )
+        with (
+            patch("src.job_runner.telegram_enabled", return_value=True),
+            patch("src.job_runner.telegram_notify") as notify,
+        ):
+            runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
+            runner.tick(at(9, 1))
+            runner.tick(at(9, 2))
+        notify.assert_not_called()
+
     def test_shutdown_terminates_group_marks_interrupted_and_clears_state(self):
         job_store.enqueue_job(
             "reply",

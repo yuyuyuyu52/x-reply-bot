@@ -23,6 +23,7 @@ omitted unless they alter how the bot is configured or operated.
 - 发帖侧：每次跑 `post_once`，若人工/Telegram 队列为空，从 hotspot.db 实时选当下最佳；若主题与当天已发重复，回落到 auto_topic。
 
 ### Added
+- Add a SQLite-backed job queue for daemon tasks with durable status, log files, timeout handling, and queue-aware Telegram status
 - Add browser dependency bootstrap scripts for Chrome CDP and browser-harness deployment
 - Add /config Telegram commands to view, edit, confirm, apply, and rollback .env-based bot configuration
 - Add /update Telegram command to pull latest code, compile-check, restart, health-check, and report the result
@@ -40,6 +41,7 @@ omitted unless they alter how the bot is configured or operated.
 
 ### Fixed
 - Prevent high-priority AI workflow topics from being filtered out solely by an under-scored LLM result
+- Prevent a hung daemon job from blocking the scheduler indefinitely, and label overdue `/status` slots as pending recalculation
 - Fix circular imports that prevented direct entrypoint module startup
 - Prevent Telegram /config from changing process-control variables that can break rollback or duplicate daemon sessions
 - Track /update as the active Telegram job while the detached update script is running

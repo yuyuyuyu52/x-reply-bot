@@ -9,8 +9,15 @@ from datetime import datetime
 from pathlib import Path
 
 from src import job_store
-from src.common import LOG_DIR
+from src.common import LOG_DIR, telegram_enabled, telegram_notify
+from src.logger import get_logger
 from src.scheduling import BEIJING_TZ
+
+logger = get_logger(__name__)
+
+
+def _kv(icon: str, label: str, value) -> str:
+    return f"{icon} {label}: {value}"
 
 
 class JobRunner:
@@ -101,10 +108,13 @@ class JobRunner:
                 code = None
         if code is not None:
             status = "succeeded" if code == 0 else "failed"
+            job_ref = self.job
             try:
-                job_store.mark_finished(int(self.job["id"]), status, int(code), now)
+                finished = job_store.mark_finished(int(self.job["id"]), status, int(code), now)
             finally:
                 self._clear_state()
+            if status != "succeeded":
+                self._notify_failure(finished or job_ref, status, int(code))
             return
         if self._timed_out(now):
             self._terminate_timeout(now)
@@ -126,9 +136,10 @@ class JobRunner:
         job = self.job
         self._terminate_process_tree(proc)
         try:
-            job_store.mark_timed_out(int(job["id"]), now, "job exceeded timeout")
+            finished = job_store.mark_timed_out(int(job["id"]), now, "job exceeded timeout")
         finally:
             self._clear_state()
+        self._notify_failure(finished or job, "timed_out", None)
 
     def _terminate_process_tree(self, proc: subprocess.Popen[str]) -> None:
         try:
@@ -155,6 +166,27 @@ class JobRunner:
         if self._output_fh is not None:
             self._output_fh.close()
             self._output_fh = None
+
+    def _notify_failure(self, job: dict, status: str, exit_code: int | None) -> None:
+        if not telegram_enabled():
+            return
+        output = tail_output(job, 1500)
+        body = "\n".join([
+            "⚠️ 任务失败",
+            "",
+            _kv("🧩", "任务", f"#{job.get('id', '?')} {job.get('label', '')}"),
+            _kv("⚙️", "触发", job.get("trigger", "")),
+            _kv("📌", "状态", status),
+            _kv("🔢", "exit_code", exit_code if exit_code is not None else ""),
+            _kv("📄", "日志", job.get("output_path", "")),
+            "",
+            "📄 最近输出:",
+            output or "(empty)",
+        ])
+        try:
+            telegram_notify(body)
+        except Exception as exc:
+            logger.warning(f"failure notify failed: {exc}")
 
 
 def tail_output(job: dict, chars: int = 1500) -> str:

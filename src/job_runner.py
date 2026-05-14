@@ -42,10 +42,18 @@ class JobRunner:
             self._clear_state()
 
     def _start(self, job: dict, now: datetime) -> None:
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        output_path = self.log_dir / f"job-{job['id']}.log"
-        output_fh = output_path.open("w", encoding="utf-8")
-        command = json.loads(job["command_json"])
+        output_fh = None
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            output_path = self.log_dir / f"job-{job['id']}.log"
+            output_fh = output_path.open("w", encoding="utf-8")
+            command = json.loads(job["command_json"])
+        except Exception as exc:
+            if output_fh is not None:
+                output_fh.close()
+            job_store.mark_finished(int(job["id"]), "failed", None, now, f"setup failed: {exc}")
+            self._clear_state()
+            return
         env = os.environ.copy()
         env["PYTHONPATH"] = str(self.root)
         try:

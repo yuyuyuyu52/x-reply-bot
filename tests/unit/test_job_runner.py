@@ -142,6 +142,28 @@ class JobRunnerTests(unittest.TestCase):
         queued = job_store.queued_jobs(limit=10)
         self.assertEqual([job["label"] for job in queued], ["post_once.py"])
 
+    def test_setup_failure_opening_log_file_marks_job_failed_and_clears_active_state(self):
+        job_store.enqueue_job(
+            "reply",
+            "run_once.py",
+            [sys.executable, "-c", "print('ok')"],
+            "telegram",
+            created_at=at(9),
+        )
+        runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
+
+        with patch("pathlib.Path.open", side_effect=OSError("disk full")):
+            runner.tick(at(9, 1))
+
+        self.assertIsNone(runner.proc)
+        self.assertIsNone(runner.job)
+        self.assertIsNone(runner._output_fh)
+        self.assertIsNone(job_store.active_job())
+        recent = job_store.recent_jobs(["failed", "interrupted"], limit=1)
+        self.assertEqual(recent[0]["label"], "run_once.py")
+        self.assertIn("setup failed", recent[0]["error_summary"])
+        self.assertIn("disk full", recent[0]["error_summary"])
+
     def test_shutdown_terminates_group_marks_interrupted_and_clears_state(self):
         job_store.enqueue_job(
             "reply",

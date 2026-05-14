@@ -12,7 +12,7 @@ import os
 import subprocess
 from datetime import datetime, timedelta
 
-from src import postable_pool
+from src import job_store, postable_pool
 from src.common import (
     DAILY_REPORT_STATE_PATH,
     HISTORY_DIR,
@@ -49,6 +49,31 @@ def format_kv(icon: str, label: str, value) -> str:
     return f"{icon} {label}: {value}"
 
 
+def _format_schedule_time(ts: datetime, now: datetime, active: bool) -> str:
+    formatted = ts.strftime('%Y-%m-%d %H:%M:%S %Z')
+    if ts > now:
+        return formatted
+    if active:
+        return f"当前任务完成后重算（原定 {formatted}）"
+    return f"已到点，等待调度循环（原定 {formatted}）"
+
+
+def _job_queue_lines(active: dict | None, queued: list[dict], recent_bad: list[dict]) -> list[str]:
+    lines: list[str] = []
+    if active:
+        lines.append(format_kv("⏳", "当前", f"正在执行 #{active['id']} {active['label']} ({active.get('trigger', '')})"))
+    else:
+        lines.append(format_kv("✅", "当前", "空闲"))
+    lines.append(format_kv("📚", "队列", f"{len(queued)} 个"))
+    for job in queued:
+        lines.append(f"  #{job['id']} {job['label']} ({job.get('trigger', '')})")
+    if recent_bad:
+        lines.append(format_kv("⚠️", "最近异常", ""))
+        for job in recent_bad:
+            lines.append(f"  #{job['id']} {job['label']} {job.get('status', '')}")
+    return lines
+
+
 def latest_summary() -> str:
     latest = load_json(LATEST_RUN_PATH, {})
     if not latest:
@@ -82,19 +107,20 @@ def status_text(
     active_label: str,
 ) -> str:
     now = _beijing_now()
+    active_job = job_store.active_job()
+    queued = job_store.queued_jobs(limit=5)
+    recent_bad = job_store.recent_jobs(["failed", "timed_out", "interrupted"], limit=3)
     lines = format_header("📊 Bot 状态")
-    if run_proc and run_proc.poll() is None:
-        lines.append(format_kv("⏳", "当前", f"正在执行 {active_label}"))
-    else:
-        lines.append(format_kv("✅", "当前", "空闲"))
+    lines.extend(_job_queue_lines(active_job, queued, recent_bad))
     lines.append(format_kv("🕒", "现在", now.strftime('%Y-%m-%d %H:%M:%S %Z')))
-    lines.append(format_kv("💬", "下次回复", next_run_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
-    lines.append(format_kv("📝", "下次主动发帖", next_post_run_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
+    active = bool(active_job)
+    lines.append(format_kv("💬", "下次回复", _format_schedule_time(next_run_at, now, active)))
+    lines.append(format_kv("📝", "下次主动发帖", _format_schedule_time(next_post_run_at, now, active)))
     if learning_enabled():
-        lines.append(format_kv("👀", "下次观察学习", next_learn_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
-    lines.append(format_kv("📈", "下次反馈回访", next_revisit_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
+        lines.append(format_kv("👀", "下次观察学习", _format_schedule_time(next_learn_at, now, active)))
+    lines.append(format_kv("📈", "下次反馈回访", _format_schedule_time(next_revisit_at, now, active)))
     if hotspot_enabled():
-        lines.append(format_kv("🔥", "下次热点发现", next_hotspot_at.strftime('%Y-%m-%d %H:%M:%S %Z')))
+        lines.append(format_kv("🔥", "下次热点发现", _format_schedule_time(next_hotspot_at, now, active)))
     lines.append("")
     lines.append(latest_summary())
     return "\n".join(lines)

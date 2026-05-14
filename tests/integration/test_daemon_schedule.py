@@ -9,7 +9,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -21,6 +21,7 @@ os.environ["X_LEARN_INTERVAL_SECONDS"] = "900"
 os.environ["X_POST_SCHEDULE_HOURS"] = "11,19"
 
 import src.scheduling as bd  # noqa: E402  -- scheduling helpers were extracted from bot_daemon
+import bot_daemon  # noqa: E402
 
 CST = timezone(timedelta(hours=8))
 
@@ -230,6 +231,76 @@ class CarryOverTests(unittest.TestCase):
         )
         # Disabled → never pin to finished_at, recompute normally.
         self.assertEqual(sim["next_hotspot_at"], bd.next_hotspot_after(finished))
+
+
+class JobTimeoutTests(unittest.TestCase):
+    class Proc:
+        pass
+
+    def test_job_timed_out_after_configured_limit(self):
+        proc = self.Proc()
+        bot_daemon.mark_job_started(proc, at(9, 0))
+        with patch.dict(os.environ, {"X_JOB_TIMEOUT_SECONDS": "600"}):
+            timed_out, elapsed, limit = bot_daemon.job_timeout_info(proc, at(9, 11))
+        self.assertTrue(timed_out)
+        self.assertEqual(elapsed, 660)
+        self.assertEqual(limit, 600)
+
+    def test_job_not_timed_out_before_configured_limit(self):
+        proc = self.Proc()
+        bot_daemon.mark_job_started(proc, at(9, 0))
+        with patch.dict(os.environ, {"X_JOB_TIMEOUT_SECONDS": "600"}):
+            timed_out, elapsed, limit = bot_daemon.job_timeout_info(proc, at(9, 5))
+        self.assertFalse(timed_out)
+        self.assertEqual(elapsed, 300)
+        self.assertEqual(limit, 600)
+
+
+class JobOutputTests(unittest.TestCase):
+    def test_start_job_writes_output_to_file_instead_of_pipe(self):
+        proc = Mock()
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch.object(bot_daemon, "_beijing_now", return_value=at(9, 0)),
+            patch("bot_daemon.subprocess.Popen", return_value=proc) as popen,
+            patch("pathlib.Path.open", create=True) as open_mock,
+        ):
+            fh = open_mock.return_value
+            result = bot_daemon.start_job("run_once.py", "schedule")
+
+        self.assertIs(result, proc)
+        self.assertIs(popen.call_args.kwargs["stdout"], fh)
+        self.assertIs(popen.call_args.kwargs["stderr"], bot_daemon.subprocess.STDOUT)
+        self.assertIsNot(popen.call_args.kwargs["stdout"], bot_daemon.subprocess.PIPE)
+        self.assertTrue(hasattr(proc, "_x_reply_output_path"))
+        fh.close.assert_called_once()
+
+
+class ScheduleEnqueueTests(unittest.TestCase):
+    def test_enqueue_scheduled_job_skips_when_same_kind_pending(self):
+        with (
+            patch("bot_daemon.job_store.has_pending_or_running", return_value=True) as pending,
+            patch("bot_daemon.job_store.enqueue_job") as enqueue,
+        ):
+            job = bot_daemon.enqueue_scheduled_job("reply", at(9, 0))
+        self.assertIsNone(job)
+        pending.assert_called_once_with("reply", trigger="schedule")
+        enqueue.assert_not_called()
+
+    def test_enqueue_scheduled_job_creates_slot_key(self):
+        with (
+            patch("bot_daemon.job_store.has_pending_or_running", return_value=False),
+            patch("bot_daemon.job_store.enqueue_job", return_value={"id": 1}) as enqueue,
+        ):
+            job = bot_daemon.enqueue_scheduled_job("reply", at(9, 0))
+        self.assertEqual(job["id"], 1)
+        kwargs = enqueue.call_args.kwargs
+        self.assertEqual(kwargs["slot_key"], "schedule:reply:2026-05-05T09:00")
+        self.assertEqual(kwargs["trigger"], "schedule")
+        self.assertEqual(kwargs["kind"], "reply")
+        self.assertEqual(kwargs["command"][1], str(bot_daemon.ROOT / "run_once.py"))
+        self.assertIn("--trigger", kwargs["command"])
+        self.assertIn("schedule", kwargs["command"])
 
 
 if __name__ == "__main__":

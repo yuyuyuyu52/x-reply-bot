@@ -14,12 +14,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 import urllib.parse
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 
+from src import job_store
 from src.common import (
     TELEGRAM_STATE_PATH,
     load_json,
@@ -28,6 +29,7 @@ from src.common import (
     telegram_notify,
     telegram_token,
 )
+from src.job_specs import build_job_command, job_spec
 from src.logger import get_logger
 from src.persona_store import add_event as persona_add_event
 from src.reporters import (
@@ -39,6 +41,7 @@ from src.reporters import (
 )
 
 logger = get_logger(__name__)
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _safe_notify(text: str) -> None:
@@ -60,6 +63,24 @@ def _start_update_process(root, env: dict) -> subprocess.Popen[str]:
         env=env,
         start_new_session=True,
     )
+
+
+def enqueue_command_job(kind: str) -> dict:
+    spec = job_spec(kind, trigger="telegram")
+    return job_store.enqueue_job(
+        kind=spec.kind,
+        label=spec.label,
+        command=build_job_command(spec, ROOT, "telegram"),
+        trigger="telegram",
+        priority=spec.priority,
+        timeout_seconds=spec.timeout_seconds,
+    )
+
+
+def _queue_notify(title: str, job: dict) -> None:
+    pos = job_store.queue_position(int(job["id"]))
+    suffix = f"队列位置: {pos}" if pos else "即将执行"
+    _safe_notify(f"{title}\n\n✅ 已加入队列 #{job['id']}\n{suffix}")
 
 
 def tg_api(method: str, params: dict | None = None, timeout: int = 30) -> dict:
@@ -109,31 +130,23 @@ def handle_command(
     run_trigger: str,
     active_label: str,
 ) -> tuple[subprocess.Popen[str] | None, datetime, datetime, datetime, datetime, datetime, str, str]:
-    # Lazy import to break the bot_daemon -> telegram_commands -> bot_daemon cycle.
-    from bot_daemon import ROOT, _child_env, start_job
-
     stripped = (text or "").strip()
     if not stripped:
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
     command = stripped.split()[0].lower()
     if command.startswith("/run"):
-        if run_proc and run_proc.poll() is None:
-            _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
-        _safe_notify("💬 回复\n\n✅ 已收到 /run，开始执行。")
-        return start_job("run_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "run_once.py"
+        job = enqueue_command_job("reply")
+        _queue_notify("💬 回复", job)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/status"):
         _safe_notify(status_text(run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, active_label))
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/update"):
-        if run_proc and run_proc.poll() is None:
-            _safe_notify("⏳ 当前已有任务在执行，暂不更新。请等当前任务结束后再发送 /update。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
-        _safe_notify("🔄 更新\n\n✅ 已收到 /update，开始更新：拉取最新代码、检查并重启。更新完成后会再通知你。")
-        update_proc = _start_update_process(ROOT, _child_env())
-        return update_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "scripts/update_bot.sh"
+        job = enqueue_command_job("update")
+        _queue_notify("🔄 更新", job)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/config"):
         from src.config_manager import handle_config_command
@@ -143,34 +156,14 @@ def handle_command(
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/post_once"):
-        if run_proc and run_proc.poll() is None:
-            _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
-        _safe_notify("📝 主动发帖\n\n✅ 已收到 /post_once，开始执行。")
-        return start_job("post_once.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "post_once.py"
+        job = enqueue_command_job("post")
+        _queue_notify("📝 主动发帖", job)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/post_dry_run"):
-        if run_proc and run_proc.poll() is None:
-            _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
-        _safe_notify("📝 主动发帖\n\n🧪 已收到 /post_dry_run，开始生成候选但不会发送。")
-        return (
-            subprocess.Popen(
-                [sys.executable, str(ROOT / "post_once.py"), "--trigger", "telegram", "--dry-run"],
-                cwd=str(ROOT),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=_child_env(),
-            ),
-            next_run_at,
-            next_post_run_at,
-            next_learn_at,
-            next_revisit_at,
-            next_hotspot_at,
-            "telegram",
-            "post_once.py --dry-run",
-        )
+        job = enqueue_command_job("post_dry")
+        _queue_notify("📝 主动发帖", job)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/post_status"):
         _safe_notify(post_summary(next_post_run_at))
@@ -181,29 +174,23 @@ def handle_command(
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/learn_once"):
-        if run_proc and run_proc.poll() is None:
-            _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
-        _safe_notify("👀 观察学习\n\n✅ 已收到 /learn_once，开始执行。")
-        return start_job("src/learning/observe.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/learning/observe.py"
+        job = enqueue_command_job("learn")
+        _queue_notify("👀 观察学习", job)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/revisit_status"):
         _safe_notify(revisit_summary(next_revisit_at))
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/revisit_once"):
-        if run_proc and run_proc.poll() is None:
-            _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
-        _safe_notify("📈 反馈回访\n\n✅ 已收到 /revisit_once，开始执行。")
-        return start_job("src/learning/revisit.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "src/learning/revisit.py"
+        job = enqueue_command_job("revisit")
+        _queue_notify("📈 反馈回访", job)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/hotspot_discover"):
-        if run_proc and run_proc.poll() is None:
-            _safe_notify("⏳ 当前已有任务在执行。")
-            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
-        _safe_notify("🔥 热点发现\n\n✅ 已收到 /hotspot_discover，开始执行。")
-        return start_job("discover_hotspots.py", "telegram"), next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "discover_hotspots.py"
+        job = enqueue_command_job("hotspot")
+        _queue_notify("🔥 热点发现", job)
+        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/hotspot_status"):
         _safe_notify(hotspot_summary(next_hotspot_at))

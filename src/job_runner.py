@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -30,16 +31,15 @@ class JobRunner:
             self._start(job, current)
 
     def shutdown(self) -> None:
-        if self.proc is not None and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(timeout=10)
-        if self._output_fh is not None:
-            self._output_fh.close()
-            self._output_fh = None
+        proc = self.proc
+        job = self.job
+        try:
+            if proc is not None and proc.poll() is None:
+                self._terminate_process_tree(proc)
+            if job is not None:
+                job_store.mark_finished(int(job["id"]), "interrupted", None, datetime.now(tz=BEIJING_TZ))
+        finally:
+            self._clear_state()
 
     def _start(self, job: dict, now: datetime) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -56,14 +56,21 @@ class JobRunner:
                 stderr=subprocess.STDOUT,
                 text=True,
                 env=env,
+                start_new_session=True,
             )
         except Exception as exc:
             output_fh.close()
             job_store.mark_finished(int(job["id"]), "failed", None, now, f"spawn failed: {exc}")
             return
         self.proc = proc
-        self.job = job_store.mark_started(int(job["id"]), proc.pid, output_path, now)
+        self.job = job
         self._output_fh = output_fh
+        try:
+            self.job = job_store.mark_started(int(job["id"]), proc.pid, output_path, now)
+        except Exception:
+            self._terminate_process_tree(proc)
+            self._clear_state()
+            raise
 
     def _check_running(self, now: datetime) -> None:
         assert self.proc is not None
@@ -76,11 +83,11 @@ class JobRunner:
             except subprocess.TimeoutExpired:
                 code = None
         if code is not None:
-            self._close_output()
             status = "succeeded" if code == 0 else "failed"
-            job_store.mark_finished(int(self.job["id"]), status, int(code), now)
-            self.proc = None
-            self.job = None
+            try:
+                job_store.mark_finished(int(self.job["id"]), status, int(code), now)
+            finally:
+                self._clear_state()
             return
         if self._timed_out(now):
             self._terminate_timeout(now)
@@ -98,14 +105,32 @@ class JobRunner:
     def _terminate_timeout(self, now: datetime) -> None:
         assert self.proc is not None
         assert self.job is not None
-        self.proc.terminate()
+        proc = self.proc
+        job = self.job
+        self._terminate_process_tree(proc)
         try:
-            self.proc.wait(timeout=10)
+            job_store.mark_timed_out(int(job["id"]), now, "job exceeded timeout")
+        finally:
+            self._clear_state()
+
+    def _terminate_process_tree(self, proc: subprocess.Popen[str]) -> None:
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except Exception:
+            proc.terminate()
+        try:
+            proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            self.proc.kill()
-            self.proc.wait(timeout=10)
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                proc.kill()
+            proc.wait(timeout=10)
+
+    def _clear_state(self) -> None:
         self._close_output()
-        job_store.mark_timed_out(int(self.job["id"]), now, "job exceeded timeout")
         self.proc = None
         self.job = None
 

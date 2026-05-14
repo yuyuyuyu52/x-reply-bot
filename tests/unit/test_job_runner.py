@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,7 @@ class JobRunnerTests(unittest.TestCase):
         self.assertIn("job-1.log", active["output_path"])
         self.assertIsNot(popen.call_args.kwargs["stdout"], subprocess.PIPE)
         self.assertIs(popen.call_args.kwargs["stderr"], subprocess.STDOUT)
+        self.assertIs(popen.call_args.kwargs["start_new_session"], True)
 
     def test_tick_marks_completed_job_succeeded(self):
         job_store.enqueue_job("reply", "run_once.py", [sys.executable, "-c", "print('ok')"], "telegram", created_at=at(9))
@@ -82,15 +84,88 @@ class JobRunnerTests(unittest.TestCase):
         proc = MagicMock()
         proc.pid = 456
         proc.poll.return_value = None
+        proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="job", timeout=0.1), 0]
 
-        with patch("src.job_runner.subprocess.Popen", return_value=proc):
+        with (
+            patch("src.job_runner.subprocess.Popen", return_value=proc),
+            patch("src.job_runner.os.getpgid", return_value=456) as getpgid,
+            patch("src.job_runner.os.killpg") as killpg,
+        ):
             runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
             runner.tick(at(9, 0))
             runner.tick(at(9, 0, 2))
 
-        proc.terminate.assert_called_once()
+        getpgid.assert_called_with(456)
+        killpg.assert_called_once_with(456, signal.SIGTERM)
+        proc.terminate.assert_not_called()
         recent = job_store.recent_jobs(["timed_out"], limit=1)
         self.assertEqual(recent[0]["status"], "timed_out")
+
+    def test_mark_started_failure_terminates_spawned_process_and_clears_state(self):
+        job_store.enqueue_job(
+            "reply",
+            "run_once.py",
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            "telegram",
+            created_at=at(9),
+        )
+        job_store.enqueue_job(
+            "post",
+            "post_once.py",
+            [sys.executable, "-c", "print('second')"],
+            "telegram",
+            created_at=at(9, 1),
+        )
+        proc = MagicMock()
+        proc.pid = 789
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
+
+        with (
+            patch("src.job_runner.subprocess.Popen", return_value=proc),
+            patch("src.job_runner.job_store.mark_started", side_effect=RuntimeError("guard failed")),
+            patch("src.job_runner.os.getpgid", return_value=789),
+            patch("src.job_runner.os.killpg") as killpg,
+        ):
+            with self.assertRaises(RuntimeError):
+                runner.tick(at(9, 1))
+
+        killpg.assert_called_once_with(789, signal.SIGTERM)
+        self.assertIsNone(runner.proc)
+        self.assertIsNone(runner.job)
+        self.assertIsNone(runner._output_fh)
+        queued = job_store.queued_jobs(limit=10)
+        self.assertEqual([job["label"] for job in queued], ["post_once.py"])
+
+    def test_shutdown_terminates_group_marks_interrupted_and_clears_state(self):
+        job_store.enqueue_job(
+            "reply",
+            "run_once.py",
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            "telegram",
+            created_at=at(9),
+        )
+        proc = MagicMock()
+        proc.pid = 321
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+
+        with (
+            patch("src.job_runner.subprocess.Popen", return_value=proc),
+            patch("src.job_runner.os.getpgid", return_value=321),
+            patch("src.job_runner.os.killpg") as killpg,
+        ):
+            runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
+            runner.tick(at(9, 0))
+            runner.shutdown()
+
+        killpg.assert_called_once_with(321, signal.SIGTERM)
+        recent = job_store.recent_jobs(["interrupted"], limit=1)
+        self.assertEqual(recent[0]["status"], "interrupted")
+        self.assertIsNone(runner.proc)
+        self.assertIsNone(runner.job)
+        self.assertIsNone(runner._output_fh)
 
 
 if __name__ == "__main__":

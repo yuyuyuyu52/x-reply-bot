@@ -2,11 +2,7 @@
 from __future__ import annotations
 
 import fcntl
-import os
-import re
 import signal
-import subprocess
-import sys
 import time
 import traceback
 from pathlib import Path
@@ -14,18 +10,14 @@ from pathlib import Path
 from src import job_store
 from src.common import (
     BOT_LOCK_PATH,
-    LOG_DIR,
     ensure_state_dirs,
     load_env_file,
-    telegram_enabled,
-    telegram_notify,
 )
 from src.job_runner import JobRunner
 from src.job_specs import build_job_command, job_spec
 from src.logger import get_logger
 from src.reporters import (
     count_scheduled_posts,
-    format_kv,
     maybe_send_daily_cost_report,
     maybe_send_revisit_report,
     post_daily_limit,
@@ -57,41 +49,6 @@ LOCK_PATH = BOT_LOCK_PATH
 # Module-level so the signal handler (which can't easily capture closures) and
 # the loop can share state without globals-in-main wiring.
 _shutdown_requested = False
-_JOB_STARTED_ATTR = "_x_reply_started_at"
-_JOB_OUTPUT_PATH_ATTR = "_x_reply_output_path"
-
-
-def job_timeout_seconds() -> int:
-    try:
-        return max(300, int(os.environ.get("X_JOB_TIMEOUT_SECONDS", "3600")))
-    except ValueError:
-        return 3600
-
-
-def mark_job_started(proc: subprocess.Popen[str], started_at=None):
-    setattr(proc, _JOB_STARTED_ATTR, started_at or _beijing_now())
-    return proc
-
-
-def mark_job_output_path(proc: subprocess.Popen[str], output_path: Path):
-    setattr(proc, _JOB_OUTPUT_PATH_ATTR, output_path)
-    return proc
-
-
-def job_timeout_info(proc: subprocess.Popen[str], now=None) -> tuple[bool, int, int]:
-    started_at = getattr(proc, _JOB_STARTED_ATTR, None)
-    if started_at is None:
-        return False, 0, job_timeout_seconds()
-    current = now or _beijing_now()
-    elapsed = max(0, int((current - started_at).total_seconds()))
-    limit = job_timeout_seconds()
-    return elapsed > limit, elapsed, limit
-
-
-def _child_env() -> dict:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
-    return env
 
 
 def slot_key(kind: str, scheduled_for) -> str:
@@ -113,97 +70,6 @@ def enqueue_scheduled_job(kind: str, scheduled_for):
         priority=spec.priority,
         timeout_seconds=spec.timeout_seconds,
     )
-
-
-def start_job(script: str, trigger: str, extra_args: list[str] | None = None) -> subprocess.Popen[str]:
-    logger.info(f"{script} start trigger={trigger}")
-    cmd = [sys.executable, str(ROOT / script), "--trigger", trigger]
-    if extra_args:
-        cmd.extend(extra_args)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    safe_script = re.sub(r"[^0-9A-Za-z_.-]+", "_", script)
-    stamp = _beijing_now().strftime("%Y%m%d_%H%M%S")
-    output_path = LOG_DIR / f"job-{stamp}-{os.getpid()}-{safe_script}.log"
-    output_fh = output_path.open("w", encoding="utf-8")
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(ROOT),
-            stdout=output_fh,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=_child_env(),
-        )
-    finally:
-        output_fh.close()
-    mark_job_output_path(proc, output_path)
-    return mark_job_started(proc)
-
-
-def terminate_timed_out_job(run_proc: subprocess.Popen[str], label: str, trigger: str, elapsed: int, limit: int) -> None:
-    logger.warning("%s timed out trigger=%s elapsed=%ss limit=%ss; terminating", label, trigger, elapsed, limit)
-    if telegram_enabled():
-        try:
-            telegram_notify(
-                "\n".join(
-                    [
-                        "⚠️ 任务超时",
-                        "",
-                        format_kv("🧩", "任务", label or "job"),
-                        format_kv("⚙️", "触发", trigger),
-                        format_kv("⏱️", "已运行", f"{elapsed}s / {limit}s"),
-                        "",
-                        "已终止该任务，调度器会在下一轮继续处理后续 slot。",
-                    ]
-                )
-            )
-        except Exception as exc:
-            logger.warning(f"telegram timeout notify failed: {exc}")
-    try:
-        run_proc.terminate()
-        try:
-            run_proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            logger.warning("%s did not exit after timeout SIGTERM; killing", label)
-            run_proc.kill()
-            run_proc.wait(timeout=10)
-    except Exception as exc:
-        logger.warning(f"{label} timeout termination failed: {exc}")
-
-
-def finish_run(run_proc: subprocess.Popen[str], trigger: str, label: str) -> None:
-    output_path = getattr(run_proc, _JOB_OUTPUT_PATH_ATTR, None)
-    if output_path:
-        try:
-            output = Path(output_path).read_text(encoding="utf-8")
-        except Exception as exc:
-            output = f"(failed to read job output {output_path}: {exc})"
-    else:
-        output = run_proc.stdout.read() if run_proc.stdout else ""
-    for line in (output or "").splitlines():
-        logger.info(f"{label}[{trigger}] {line}")
-    code = run_proc.returncode
-    logger.info(f"{label} end trigger={trigger} code={code}")
-    if code != 0 and telegram_enabled():
-        action_match = re.search(r'GENERATED_ACTION:\s*(\w+)', output or "")
-        action_info = f" ({action_match.group(1)})" if action_match else ""
-        try:
-            telegram_notify(
-                "\n".join(
-                    [
-                        "⚠️ 任务失败",
-                        "",
-                        format_kv("🧩", "任务", f"{label}{action_info}"),
-                        format_kv("⚙️", "触发", trigger),
-                        format_kv("🔢", "exit_code", code),
-                        "",
-                        "📄 最近输出:",
-                        (output or "").strip()[-1500:] or "(empty)",
-                    ]
-                )
-            )
-        except Exception as exc:
-            logger.warning(f"telegram failure notify failed: {exc}")
 
 
 def main() -> int:

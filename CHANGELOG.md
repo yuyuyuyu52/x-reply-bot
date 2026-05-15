@@ -41,6 +41,7 @@ omitted unless they alter how the bot is configured or operated.
 
 ### Fixed
 - Prevent high-priority AI workflow topics from being filtered out solely by an under-scored LLM result
+- Keep `/update` outside the durable job queue so the updater can restart the daemon without self-interruption, and preserve completed job status during shutdown
 - Prevent a hung daemon job from blocking the scheduler indefinitely, and label overdue `/status` slots as pending recalculation
 - Fix circular imports that prevented direct entrypoint module startup
 - Prevent Telegram /config from changing process-control variables that can break rollback or duplicate daemon sessions

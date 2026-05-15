@@ -65,6 +65,12 @@ def _start_update_process(root, env: dict) -> subprocess.Popen[str]:
     )
 
 
+def _child_env() -> dict:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT)
+    return env
+
+
 def enqueue_command_job(kind: str) -> dict:
     spec = job_spec(kind, trigger="telegram")
     return job_store.enqueue_job(
@@ -144,9 +150,12 @@ def handle_command(
         return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
 
     if command.startswith("/update"):
-        job = enqueue_command_job("update")
-        _queue_notify("🔄 更新", job)
-        return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+        if (run_proc and run_proc.poll() is None) or job_store.active_job():
+            _safe_notify("⏳ 当前已有任务在执行，暂不更新。请等当前任务结束后再发送 /update。")
+            return run_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, run_trigger, active_label
+        _safe_notify("🔄 更新\n\n✅ 已收到 /update，开始更新：拉取最新代码、检查并重启。更新完成后会再通知你。")
+        update_proc = _start_update_process(ROOT, _child_env())
+        return update_proc, next_run_at, next_post_run_at, next_learn_at, next_revisit_at, next_hotspot_at, "telegram", "scripts/update_bot.sh"
 
     if command.startswith("/config"):
         from src.config_manager import handle_config_command

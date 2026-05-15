@@ -28,11 +28,6 @@ class JobSpecsTests(unittest.TestCase):
         cmd = build_job_command(spec, ROOT, "telegram")
         self.assertEqual(cmd[1:], [str(ROOT / "post_once.py"), "--trigger", "telegram", "--dry-run"])
 
-    def test_update_uses_shell_command(self):
-        spec = job_spec("update")
-        cmd = build_job_command(spec, ROOT, "telegram")
-        self.assertEqual(cmd, ["/usr/bin/env", "bash", str(ROOT / "scripts/update_bot.sh")])
-
     def test_unknown_kind_raises(self):
         with self.assertRaises(KeyError):
             job_spec("missing")

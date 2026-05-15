@@ -259,6 +259,34 @@ class JobRunnerTests(unittest.TestCase):
         self.assertIsNone(runner.job)
         self.assertIsNone(runner._output_fh)
 
+    def test_shutdown_records_already_exited_process_as_finished(self):
+        job_store.enqueue_job(
+            "reply",
+            "run_once.py",
+            [sys.executable, "-c", "print('ok')"],
+            "telegram",
+            created_at=at(9),
+        )
+        proc = MagicMock()
+        proc.pid = 654
+        proc.poll.return_value = 0
+
+        with (
+            patch("src.job_runner.subprocess.Popen", return_value=proc),
+            patch("src.job_runner.os.killpg") as killpg,
+        ):
+            runner = job_runner.JobRunner(root=self.root, log_dir=self.logs)
+            runner.tick(at(9, 0))
+            runner.shutdown()
+
+        killpg.assert_not_called()
+        recent = job_store.recent_jobs(["succeeded", "interrupted"], limit=1)
+        self.assertEqual(recent[0]["status"], "succeeded")
+        self.assertEqual(recent[0]["exit_code"], 0)
+        self.assertIsNone(runner.proc)
+        self.assertIsNone(runner.job)
+        self.assertIsNone(runner._output_fh)
+
 
 if __name__ == "__main__":
     unittest.main()

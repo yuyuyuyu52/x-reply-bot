@@ -41,9 +41,18 @@ class JobRunner:
         proc = self.proc
         job = self.job
         try:
-            if proc is not None and proc.poll() is None:
-                self._terminate_process_tree(proc)
-            if job is not None:
+            if proc is not None and job is not None:
+                code = proc.poll()
+                finished_at = datetime.now(tz=BEIJING_TZ)
+                if code is None:
+                    self._terminate_process_tree(proc)
+                    job_store.mark_finished(int(job["id"]), "interrupted", None, finished_at)
+                else:
+                    status = "succeeded" if code == 0 else "failed"
+                    finished = job_store.mark_finished(int(job["id"]), status, int(code), finished_at)
+                    if status != "succeeded":
+                        self._notify_failure(finished or job, status, int(code))
+            elif job is not None:
                 job_store.mark_finished(int(job["id"]), "interrupted", None, datetime.now(tz=BEIJING_TZ))
         finally:
             self._clear_state()

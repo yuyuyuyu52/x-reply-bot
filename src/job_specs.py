@@ -33,7 +33,6 @@ def job_spec(kind: str, trigger: str = "telegram") -> JobSpec:
         "learn": ("src/learning/observe.py", (), False, 1800),
         "revisit": ("src/learning/revisit.py", (), False, 1800),
         "hotspot": ("discover_hotspots.py", (), False, 1800),
-        "update": ("scripts/update_bot.sh", (), True, 1800),
     }
     entrypoint, extra_args, shell, timeout = specs[kind]
     return JobSpec(

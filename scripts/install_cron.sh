@@ -8,7 +8,7 @@ legacy="# x-reply-bot schedule"
 begin="# BEGIN x-reply-bot schedule"
 end="# END x-reply-bot schedule"
 cron_tz="CRON_TZ=${X_REPLY_TZ:-Asia/Shanghai}"
-job="0 7-23 * * * /usr/bin/env bash \"${script}\""
+job="0 1-23 * * * /usr/bin/env bash \"${script}\""
 
 existing="$(crontab -l 2>/dev/null || true)"
 filtered="$(

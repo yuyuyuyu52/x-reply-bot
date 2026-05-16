@@ -25,3 +25,10 @@ def test_post_summary_shows_manual_and_hotspot_pool(tmp_state, monkeypatch):
     assert "热点池(24h): 7" in out
     assert "今日已发热点: 1" in out
     assert "今日定时已发" in out
+
+
+def test_post_daily_limit_defaults_to_four(monkeypatch):
+    import src.reporters as reporters
+
+    monkeypatch.delenv("X_POST_DAILY_LIMIT", raising=False)
+    assert reporters.post_daily_limit() == 4

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime
 
 from src.logger import get_logger
@@ -56,14 +57,107 @@ Text Rules:
 """
 
 
+X_TWITTER_STYLE_PROMPT = """X/Twitter Style Rules:
+- Brevity is mandatory. Use one sentence when one sentence works.
+- Speak like a peer with specific taste, not like an assistant.
+- Share a direct opinion or an uncomfortable truth when the post gives you a real angle.
+- Prefer concrete judgment over balanced analysis.
+- Parentheses are allowed for side-comments or internal thoughts, but don't force them.
+
+Avoid:
+- The "Question? Answer." trope, e.g. "The result? Better sales."
+- "Picture this", "In the realm of", or similar essay openers.
+- "It's not just A, it's B" structure.
+- Generic agreement, summary, or advice-column tone.
+"""
+
+
+def _language_counts(text: str) -> dict[str, int]:
+    return {
+        "han": len(re.findall(r"[\u4e00-\u9fff]", text or "")),
+        "latin": len(re.findall(r"[A-Za-z]", text or "")),
+    }
+
+
+def detect_reply_language(post: dict) -> str:
+    """Detect reply language from the main post, not quoted context."""
+    text = str(post.get("main_post_text") or "").strip()
+    counts = _language_counts(text)
+    han = counts["han"]
+    latin = counts["latin"]
+    if latin >= 20 and latin >= han * 2:
+        return "en"
+    if han >= 4 and han >= latin / 2:
+        return "zh"
+    if han and latin:
+        return "mixed"
+    if latin:
+        return "en"
+    if han:
+        return "zh"
+    return "unknown"
+
+
+def reply_language_instruction(target_language: str) -> str:
+    if target_language == "en":
+        return (
+            "Target reply language: English.\n"
+            "- The main post is English. Write `text` in English only.\n"
+            "- Do not write the reply/quote text in Chinese, even if persona, feedback, UI, or other context is Chinese.\n"
+            "- `reason` must still be written in Chinese."
+        )
+    if target_language == "zh":
+        return (
+            "Target reply language: Chinese.\n"
+            "- The main post is Chinese. Write `text` in Chinese, allowing normal English product/model names when natural.\n"
+            "- `reason` must be written in Chinese."
+        )
+    if target_language == "mixed":
+        return (
+            "Target reply language: match the main post's Chinese/English mix.\n"
+            "- Follow the main post language balance, not the persona or feedback context.\n"
+            "- `reason` must be written in Chinese."
+        )
+    return (
+        "Target reply language: infer from the main post only.\n"
+        "- Do not let quoted-post text, UI text, persona, or feedback context decide the reply language.\n"
+        "- `reason` must be written in Chinese."
+    )
+
+
+def reply_language_matches(target_language: str, text: str) -> bool:
+    if target_language not in {"en", "zh"}:
+        return True
+    counts = _language_counts(text)
+    han = counts["han"]
+    latin = counts["latin"]
+    if target_language == "en":
+        return han < 4
+    return han >= 2 or latin < 20
+
+
+def _merge_numeric_dicts(*items: dict) -> dict:
+    merged: dict = {}
+    for item in items:
+        for key, value in (item or {}).items():
+            if isinstance(value, bool):
+                merged.setdefault(key, value)
+            elif isinstance(value, (int, float)):
+                merged[key] = merged.get(key, 0) + value
+            else:
+                merged[key] = value
+    if "total_cost" in merged:
+        merged["total_cost"] = round(float(merged["total_cost"]), 8)
+    return merged
 
 
 def build_messages(post: dict, system_prompt: str) -> list[dict]:
     learning_ctx = build_learning_context()
     persona_ctx = build_persona_context()
     feedback_ctx = build_feedback_context()
+    target_language = detect_reply_language(post)
 
-    system_parts = [system_prompt]
+    system_parts = [system_prompt, X_TWITTER_STYLE_PROMPT]
     if learning_ctx:
         system_parts.append(learning_ctx)
     if persona_ctx:
@@ -74,6 +168,7 @@ def build_messages(post: dict, system_prompt: str) -> list[dict]:
         system_parts.append(
             "根据这条帖子的话题，优先使用上面规律中效果最好的 hook 类型开头，而不是写通用答案。"
         )
+    system_parts.append(reply_language_instruction(target_language))
 
     full_system = "\n\n".join(system_parts)
 
@@ -95,6 +190,7 @@ def build_messages(post: dict, system_prompt: str) -> list[dict]:
             "role": "user",
             "content": (
                 "Write a reply for this X post.\n\n"
+                f"Target reply language: {target_language}\n\n"
                 f"URL: {url}\n\n"
                 "Main post (this is the post you are replying to):\n"
                 f"{post_text}"
@@ -105,7 +201,11 @@ def build_messages(post: dict, system_prompt: str) -> list[dict]:
 
 
 def generate_reply_payload(post: dict, system_prompt: str = DEFAULT_PROMPT, allowed_actions: list[str] | None = None) -> dict:
-    result = chat_json_result(build_messages(post, system_prompt), temperature=0.7, max_tokens=520)
+    target_language = detect_reply_language(post)
+    messages = build_messages(post, system_prompt)
+    result = chat_json_result(messages, temperature=0.7, max_tokens=520)
+    usage = result["usage"]
+    cost = result["cost"]
     payload = result["payload"]
     action = str(payload.get("action") or "reply").strip().lower()
     if action not in ["reply", "quote", "repost"]:
@@ -120,16 +220,49 @@ def generate_reply_payload(post: dict, system_prompt: str = DEFAULT_PROMPT, allo
 
     if action in ["reply", "quote"] and not text:
         raise RuntimeError(f"Model returned empty text for {action}: {payload}")
+    if action in ["reply", "quote"] and not reply_language_matches(target_language, text):
+        retry_result = chat_json_result(
+            messages
+            + [
+                {
+                    "role": "system",
+                    "content": (
+                        "上一条输出的 `text` 语言不符合目标主帖语言。"
+                        "请重新输出完整 JSON，并严格遵守 Target reply language。"
+                        "如果目标语言是 English，`text` 只能用英文；`reason` 仍用中文。"
+                    ),
+                }
+            ],
+            temperature=0.4,
+            max_tokens=520,
+        )
+        usage = _merge_numeric_dicts(usage, retry_result["usage"])
+        cost = _merge_numeric_dicts(cost, retry_result["cost"])
+        payload = retry_result["payload"]
+        action = str(payload.get("action") or action).strip().lower()
+        if action not in ["reply", "quote", "repost"]:
+            action = "reply"
+        if allowed_actions and action not in allowed_actions:
+            logger.warning("retry action=%s not in allowed=%s, falling back to reply", action, allowed_actions)
+            action = "reply"
+        text = str(payload.get("text") or payload.get("reply") or "").strip().replace("\n", " ")
+        reason = str(payload.get("reason") or reason).strip().replace("\n", " ")
+        like = bool(payload.get("like")) if "like" in payload else like
+        if action in ["reply", "quote"] and not text:
+            raise RuntimeError(f"Model returned empty text for {action} after language retry: {payload}")
+        if action in ["reply", "quote"] and not reply_language_matches(target_language, text):
+            raise RuntimeError(f"Model returned {target_language} language mismatch for {action}: {payload}")
 
     return {
         "action": action,
         "reply": text,
         "reason": reason,
         "like": like,
+        "target_language": target_language,
         "source_post_url": str(post.get("url") or "").strip(),
         "selection_id": str(post.get("selection_id") or "").strip(),
-        "usage": result["usage"],
-        "cost": result["cost"],
+        "usage": usage,
+        "cost": cost,
     }
 
 

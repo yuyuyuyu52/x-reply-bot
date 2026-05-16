@@ -22,9 +22,9 @@ timestamp() {
   fi
 
   hour="$(date '+%H')"
-  if ((10#$hour < 7 || 10#$hour > 23)); then
+  if ((10#$hour == 0)); then
     echo "===== $(timestamp) ====="
-    echo "skip: outside Beijing window"
+    echo "skip: Beijing 00:00 revisit hour"
     echo
     exit 0
   fi

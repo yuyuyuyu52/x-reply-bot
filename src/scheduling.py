@@ -32,7 +32,7 @@ def next_scheduled_after(now: datetime) -> datetime:
     jitter_seconds = int(os.environ.get("X_REPLY_JITTER_SECONDS", "1800"))
     cursor = now.replace(minute=0, second=0, microsecond=0)
     while True:
-        if 7 <= cursor.hour <= 23:
+        if cursor.hour != REVISIT_HOUR:
             random.seed(cursor.strftime("%Y%m%d%H"))
             candidate = cursor + timedelta(seconds=random.randint(0, jitter_seconds))
             if candidate > now:
@@ -41,7 +41,7 @@ def next_scheduled_after(now: datetime) -> datetime:
 
 
 def proactive_schedule_hours() -> list[int]:
-    raw = os.environ.get("X_POST_SCHEDULE_HOURS", "11,19")
+    raw = os.environ.get("X_POST_SCHEDULE_HOURS", "09,13,17,21")
     hours: list[int] = []
     for part in raw.split(","):
         part = part.strip()
@@ -53,7 +53,7 @@ def proactive_schedule_hours() -> list[int]:
             continue
         if 0 <= hour <= 23:
             hours.append(hour)
-    return sorted(set(hours)) or [11, 19]
+    return sorted(set(hours)) or [9, 13, 17, 21]
 
 
 def next_proactive_after(now: datetime) -> datetime:
@@ -94,36 +94,27 @@ def next_learning_after(now: datetime) -> datetime:
     return now + timedelta(seconds=learning_interval_seconds())
 
 
-REVISIT_WINDOW_START_HOUR = 23  # inclusive
-REVISIT_WINDOW_END_HOUR = 7     # exclusive
-REVISIT_INTERVAL_SECONDS = 1800  # every 30 min while inside the window
+REVISIT_HOUR = 0
+REVISIT_WINDOW_START_HOUR = REVISIT_HOUR  # compatibility for report window keys
+REVISIT_WINDOW_END_HOUR = 1
 
 
 def in_revisit_window(now: datetime) -> bool:
-    """True iff `now` is inside the 23:00–07:00 nightly window."""
-    hour = now.hour
-    return hour >= REVISIT_WINDOW_START_HOUR or hour < REVISIT_WINDOW_END_HOUR
+    """True iff `now` is inside the daily midnight revisit hour."""
+    return now.hour == REVISIT_HOUR
 
 
 def next_revisit_after(now: datetime) -> datetime:
-    """Next 30-minute slot inside the night window strictly after `now`.
-
-    If `now` is inside the window, return `now + 30 min` (with a small floor
-    to avoid immediate re-fire). If `now` is outside, return today's 23:00 if
-    that's still in the future, else tomorrow's 23:00.
-    """
-    if in_revisit_window(now):
-        return now + timedelta(seconds=REVISIT_INTERVAL_SECONDS)
-    today_start = now.replace(hour=REVISIT_WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
-    if today_start > now:
-        return today_start
-    return today_start + timedelta(days=1)
+    """Next daily revisit slot at Beijing 00:00 strictly after `now`."""
+    midnight = now.replace(hour=REVISIT_HOUR, minute=0, second=0, microsecond=0)
+    if midnight > now:
+        return midnight
+    return midnight + timedelta(days=1)
 
 
 def revisit_guard_seconds() -> int:
-    # Mirror the learning-job guard: don't start revisit if the next reply or
-    # post slot is within this many seconds. Reply slots only fire 07-23 so
-    # this only matters near the 07:00 boundary; small value is fine.
+    # Don't start revisit if the next reply or post slot is too close. Reply
+    # skips the 00:00 hour, so this mainly prevents overlap with late jobs.
     return 600
 
 

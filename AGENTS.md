@@ -43,12 +43,12 @@ There is no test suite, no linter, and no build step. `__pycache__/` is the only
 
 `bot_daemon.py` is the long-running scheduler. It computes four independent next-fire times and runs at most one job at a time:
 
-1. **Reply job** (`run_once.py`) — hourly between Beijing 07:00–23:00, with a deterministic per-hour jitter seeded by `YYYYMMDDHH`.
-2. **Proactive post job** (`post_once.py`) — at the hours in `X_POST_SCHEDULE_HOURS` (default `11,19`), gated by `X_POST_DAILY_LIMIT` and the `pending` count in `state/post_topics.json`.
+1. **Reply job** (`run_once.py`) — hourly except during the Beijing 00:00 revisit hour, with a deterministic per-hour jitter seeded by `YYYYMMDDHH`.
+2. **Proactive post job** (`post_once.py`) — at the hours in `X_POST_SCHEDULE_HOURS` (default `09,13,17,21`), gated by `X_POST_DAILY_LIMIT` and the postable pool.
 3. **Learning job** (`src/learning/observe.py`) — runs in the gaps; refuses to start if the next reply or post slot is within `X_LEARN_GUARD_SECONDS`.
-4. **Revisit job** (`src/learning/revisit.py`) — only fires inside the 23:00–07:00 night window, every 30 min; scans `state/post_history/` (proactive posts) and `state/history/` (replies) for items ≥24h old and writes back `engagement_24h` metrics. For replies, we open the original post URL, scroll the thread, and locate our own nested reply by exact `reply_text` match (with author-handle confirmation). Failures retry up to 3 attempts before being marked `failed`.
+4. **Revisit job** (`src/learning/revisit.py`) — fires once per night at Beijing 00:00; scans `state/post_history/` (proactive posts) and `state/history/` (replies) for items ≥24h old and writes back `engagement_24h` metrics. Proactive posts and new replies are opened directly by their own status URLs; old reply records without `reply_url` are skipped. Failures retry up to 3 attempts before being marked `failed`.
 
-The daemon also long-polls Telegram (`getUpdates`) and routes commands (`/run`, `/post_once`, `/post_dry_run`, `/post_status`, `/learn_once`, `/learn_status`, `/revisit_once`, `/revisit_status`, `/event`, `/status`) into the same `start_job` path. A daily cost summary is sent once after 23:00, and a 24h engagement digest is sent once per night window after the first revisit batch completes. Concurrency is enforced by `fcntl.flock` on `state/bot.lock` (daemon) and `state/run_once.lock` / `state/post_once.lock` (jobs).
+The daemon also long-polls Telegram (`getUpdates`) and routes commands (`/run`, `/post_once`, `/post_dry_run`, `/post_status`, `/learn_once`, `/learn_status`, `/revisit_once`, `/revisit_status`, `/event`, `/status`) into the same `start_job` path. A daily cost summary is sent once after 23:00, and a 24h engagement digest is sent after the midnight revisit batch completes. Concurrency is enforced by `fcntl.flock` on `state/bot.lock` (daemon) and `state/run_once.lock` / `state/post_once.lock` (jobs).
 
 Schedule slot accounting: when a job finishes, the daemon checks whether *another* slot fired during the run and "carries over" by setting that slot to fire immediately, instead of dropping it (`carry_over_*` logic in `bot_daemon.main`). This matters when editing the loop — naïve recomputation will silently skip slots.
 
@@ -93,7 +93,7 @@ Optional behavior knobs (see README + LEARNING_MODE.md for full list):
 
 - `X_REPLY_CDP_URL`, `BROWSER_HARNESS_BIN` — point at non-default harness setup
 - `X_REPLY_JITTER_SECONDS` — reply-slot jitter (default 1800)
-- `X_POST_SCHEDULE_HOURS` (`11,19`), `X_POST_JITTER_SECONDS` (1800), `X_POST_DAILY_LIMIT` (2)
+- `X_POST_SCHEDULE_HOURS` (`09,13,17,21`), `X_POST_JITTER_SECONDS` (1800), `X_POST_DAILY_LIMIT` (4)
 - `X_LEARN_ENABLED` (1), `X_LEARN_INTERVAL_SECONDS` (900, min 300), `X_LEARN_GUARD_SECONDS` (600, min 60)
 - `X_REPLY_TG_BOT_TOKEN`, `X_REPLY_TG_CHAT_ID` — enables Telegram notify + command intake
 

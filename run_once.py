@@ -129,6 +129,7 @@ def main() -> int:
         like = bool(reply_payload.get("like")) if "like" in reply_payload else False
         reply_source_url = str(reply_payload.get("source_post_url") or "").strip()
         reply_selection_id = str(reply_payload.get("selection_id") or "").strip()
+        reply_target_language = str(reply_payload.get("target_language") or "").strip()
         reply_usage = reply_payload.get("usage") or {}
         reply_cost = reply_payload.get("cost") or {}
         print(f"GENERATED_ACTION: {action}")
@@ -179,11 +180,18 @@ def main() -> int:
             "--reply", reply_text,
             "--action", action,
         ]
+        if action in {"reply", "quote"}:
+            send_cmd.append("--return-reply-url")
         if like:
             send_cmd.append("--like")
         send = run(send_cmd)
         sys.stdout.write(send.stdout)
         sys.stderr.write(send.stderr)
+        reply_url = ""
+        for line in send.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("REPLY_URL: "):
+                reply_url = line[len("REPLY_URL: "):].strip()
 
         selection_usage = selected.get("selection_usage") or {}
         selection_cost = selected.get("selection_cost") or {}
@@ -197,11 +205,13 @@ def main() -> int:
             "date_beijing": started.strftime("%Y-%m-%d"),
             "trigger": args.trigger,
             "post_url": selected.get("url", ""),
+            "reply_url": reply_url,
             "selection_reason": selected.get("selector_reason", ""),
             "post_text": selected.get("main_post_text", ""),
             "action": action,
             "reply_text": reply_text,
             "reply_reason": reply_reason,
+            "reply_target_language": reply_target_language,
             "like": like,
             "selection_model": selected.get("selection_model", ""),
             "selection_usage": selection_usage,

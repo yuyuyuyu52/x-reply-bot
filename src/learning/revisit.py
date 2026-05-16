@@ -7,15 +7,12 @@ block, opens each URL via the browser harness, scrapes aria-label metrics,
 and writes the result back into the JSON file.
 
 For proactive posts: open the post URL, read metrics off the primary article.
-For replies: open the original post URL, scroll the thread, and locate the
-article whose tweet text exactly matches our `reply_text` (with author-handle
-confirmation when available). If nothing matches after a few scrolls, mark
-this attempt as failed; after 3 failed attempts the record is marked
-permanently failed.
+For replies: open our own `reply_url` directly and read metrics off the
+primary article. Older reply records without `reply_url` are ignored instead
+of scanning the original thread.
 
-Designed to run only inside the night window (23:00–07:00 Beijing) so it
-doesn't compete with the reply / proactive-post / observe-feed jobs for the
-single Chrome session.
+Designed to run once around Beijing 00:00 so it doesn't compete with the
+reply / proactive-post / observe-feed jobs for the single Chrome session.
 """
 from __future__ import annotations
 
@@ -75,8 +72,11 @@ def record_url(record: dict, kind: str) -> str:
     """URL of the page where this record's metrics live.
 
     For proactive posts: the post's own status URL.
-    For replies: the *original* post URL — our reply lives nested inside it.
+    For replies: our own reply URL. Older reply records without reply_url are
+    intentionally ignored instead of scanning the original thread.
     """
+    if kind == "reply":
+        return str(record.get("reply_url") or "").strip()
     return str(record.get("post_url") or "").strip()
 
 
@@ -94,6 +94,8 @@ def needs_revisit(record: dict, kind: str, now: datetime) -> bool:
         # success signal; there's no top-level "status" field in this branch.
         rc = record.get("send_returncode")
         if rc is None or int(rc) != 0:
+            return False
+        if not str(record.get("reply_url") or "").strip():
             return False
         if not reply_text_of(record):
             return False
@@ -428,13 +430,17 @@ def _run(args) -> int:
                 result = fetch_post_metrics(item["url"])
                 matched = True  # primary article is always "us" on a post URL
             else:
-                # Resolve own_handle lazily so a missing latest_post_run.json
-                # only matters when we actually have replies to revisit.
-                if not own_handle:
-                    own_handle = infer_own_handle()
-                reply_text = reply_text_of(item["record"])
-                result = fetch_reply_metrics(item["url"], reply_text, own_handle)
-                matched = bool(result.get("matched"))
+                if item["record"].get("reply_url"):
+                    result = fetch_post_metrics(item["url"])
+                    matched = True
+                else:
+                    # Resolve own_handle lazily so a missing latest_post_run.json
+                    # only matters when we actually have replies to revisit.
+                    if not own_handle:
+                        own_handle = infer_own_handle()
+                    reply_text = reply_text_of(item["record"])
+                    result = fetch_reply_metrics(item["url"], reply_text, own_handle)
+                    matched = bool(result.get("matched"))
         except Exception as exc:
             eng = update_record(item, datetime.now().astimezone(), success=False, metrics=None, deleted=False, error=f"harness_error: {exc}")
             item_summary.update({"ok": False, "error": str(exc), "attempts": eng.get("attempts")})

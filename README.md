@@ -140,15 +140,15 @@ python3 src/learning/observe.py
 ```
 
 Proactive post scheduler defaults:
-- Beijing time `11:00` and `19:00`
+- Beijing time `09:00`, `13:00`, `17:00`, and `21:00`
 - each slot sleeps a deterministic random `0-1800` seconds
-- daily limit `2`
+- daily limit `4`
 - only runs when `state/post_topics.json` still has `pending` topics
 
 Optional env overrides in `.env`:
-- `X_POST_SCHEDULE_HOURS=11,19`
+- `X_POST_SCHEDULE_HOURS=09,13,17,21`
 - `X_POST_JITTER_SECONDS=1800`
-- `X_POST_DAILY_LIMIT=2`
+- `X_POST_DAILY_LIMIT=4`
 - `X_LEARN_ENABLED=1`
 - `X_LEARN_INTERVAL_SECONDS=900`
 - `X_LEARN_GUARD_SECONDS=600`
@@ -189,7 +189,7 @@ bash scripts/uninstall_cron.sh
 ```
 
 The optional cron schedule is:
-- Beijing time `07:00` through `23:00`
+- every hour except the Beijing `00:00` revisit hour
 - once per hour
 - each run sleeps a random `0-1800` seconds before starting
 - overlap is blocked with `flock`

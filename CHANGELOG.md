@@ -31,6 +31,9 @@ omitted unless they alter how the bot is configured or operated.
 - Feedback scores injected into reply and post generation prompts as style reference
 
 ### Changed
+- Run 24h revisit once per night at Beijing 00:00 and allow scheduled replies during all other hours
+- Raise default proactive posting to four slots per day
+- Tighten reply generation style rules for shorter, more peer-like X/Twitter replies
 - Run hotspot discovery once per day, queue only the top 3 unseen hot candidates for that day's posts
 - Expand default hotspot discovery to all implemented sources and evaluate 30 candidates per run so daily discovery can fill three topics
 - Label Telegram hotspot discovery counts as evaluated candidates and include filtered examples when nothing is queued
@@ -40,6 +43,9 @@ omitted unless they alter how the bot is configured or operated.
 - Limit Product Hunt hotspot candidates to the latest 24h launches
 
 ### Fixed
+- Skip old reply records without `reply_url` during 24h revisit instead of scanning original threads
+- Record each sent reply URL for direct 24h revisit while keeping the original post URL in reply de-duplication
+- Enforce reply language from the main post so English posts do not get Chinese replies
 - Prevent high-priority AI workflow topics from being filtered out solely by an under-scored LLM result
 - Keep `/update` outside the durable job queue so the updater can restart the daemon without self-interruption, and preserve completed job status during shutdown
 - Prevent a hung daemon job from blocking the scheduler indefinitely, and label overdue `/status` slots as pending recalculation

@@ -247,15 +247,13 @@ document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.href || ''
         stdout = run_harness(textwrap.dedent(code))
         ok = '"ok": true' in stdout or "'ok': True" in stdout
         if ok:
-            # Thread self-replies should not be deduped (they are our own posts)
-            if not return_reply_url:
-                replied = load_json(REPLIED_PATH, {"posts": []})
-                posts = replied.setdefault("posts", [])
-                if url not in posts:
-                    posts.append(url)
-                    if len(posts) > 2000:
-                        replied["posts"] = posts[-2000:]
-                    write_json(REPLIED_PATH, replied)
+            replied = load_json(REPLIED_PATH, {"posts": []})
+            posts = replied.setdefault("posts", [])
+            if url not in posts:
+                posts.append(url)
+                if len(posts) > 2000:
+                    replied["posts"] = posts[-2000:]
+                write_json(REPLIED_PATH, replied)
         append_log(
             {
                 "time": datetime.now(timezone.utc).isoformat(),

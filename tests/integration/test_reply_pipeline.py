@@ -87,6 +87,7 @@ def test_happy_path_writes_history_and_log(tmp_state, mock_chat, monkeypatch):
     run_once = _import_run_once()
 
     selected_url = "https://x.com/alice/status/1234567890"
+    reply_url = "https://x.com/joewill1082630/status/1234567999"
     selection_id = "20260511_120000_000001"
 
     def fake_run(cmd):
@@ -107,6 +108,7 @@ def test_happy_path_writes_history_and_log(tmp_state, mock_chat, monkeypatch):
             }
             return _cp(stdout=json.dumps(payload), rc=0)
         if kind == "send":
+            assert "--return-reply-url" in cmd
             # The real send_reply.py would update state/replied_posts.json
             # after a confirmed send — mimic that side-effect here so the
             # post-run assertions can validate it.
@@ -122,6 +124,7 @@ def test_happy_path_writes_history_and_log(tmp_state, mock_chat, monkeypatch):
                 "action": "reply",
                 "reply": "this is a thoughtful reply",
             })
+            stdout += f"\nREPLY_URL: {reply_url}\n"
             return _cp(stdout=stdout, rc=0)
         raise AssertionError(f"unexpected child invocation: {cmd}")
 
@@ -137,6 +140,7 @@ def test_happy_path_writes_history_and_log(tmp_state, mock_chat, monkeypatch):
     assert latest["action"] == "reply"
     assert latest["post_url"] == selected_url
     assert latest["reply_text"] == "this is a thoughtful reply"
+    assert latest["reply_url"] == reply_url
     assert latest["send_returncode"] == 0
     assert "time_beijing" in latest
     assert "date_beijing" in latest
@@ -147,6 +151,7 @@ def test_happy_path_writes_history_and_log(tmp_state, mock_chat, monkeypatch):
     assert history_files, "history archive should be written"
     archived = json.loads(history_files[0].read_text())
     assert archived["post_url"] == selected_url
+    assert archived["reply_url"] == reply_url
     assert "time_beijing" in archived
     assert "date_beijing" in archived
 

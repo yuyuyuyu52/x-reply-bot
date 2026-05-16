@@ -9,6 +9,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -32,6 +33,7 @@ def reply_record(**overrides):
     base = {
         "send_returncode": 0,
         "post_url": "https://x.com/them/status/9",
+        "reply_url": "https://x.com/me/status/10",
         "reply_text": "hello world",
         "time_beijing": "2026-05-01 10:00:00 CST",
     }
@@ -99,6 +101,42 @@ class NeedsRevisitReplyTests(unittest.TestCase):
         rec.pop("reply_text")
         rec["reply"] = "legacy field"
         self.assertTrue(revisit.needs_revisit(rec, "reply", self.now))
+
+    def test_old_reply_without_reply_url_excluded(self):
+        rec = reply_record()
+        rec.pop("reply_url")
+        self.assertFalse(revisit.needs_revisit(rec, "reply", self.now))
+
+
+class RecordUrlTests(unittest.TestCase):
+    def test_reply_prefers_reply_url_when_present(self):
+        rec = reply_record(reply_url="https://x.com/me/status/10")
+        self.assertEqual(revisit.record_url(rec, "reply"), "https://x.com/me/status/10")
+
+
+class RevisitRunTests(unittest.TestCase):
+    def test_reply_with_reply_url_uses_direct_post_metrics(self):
+        item = {
+            "kind": "reply",
+            "url": "https://x.com/me/status/10",
+            "path": revisit.ROOT / "state/history/demo.json",
+            "record": reply_record(reply_url="https://x.com/me/status/10"),
+        }
+        args = type("Args", (), {"dry_run": False, "max": 1, "trigger": "manual"})()
+
+        with (
+            patch.object(revisit, "find_pending", return_value=[item]),
+            patch.object(revisit, "fetch_post_metrics", return_value={"aria": ["100 views", "2 likes"], "deleted": False}) as direct,
+            patch.object(revisit, "fetch_reply_metrics") as scan,
+            patch.object(revisit, "parse_metrics", return_value={"views": 100, "likes": 2, "replies": 0, "reposts": 0, "bookmarks": 0}),
+            patch.object(revisit, "update_record", return_value={"score": 1.0, "attempts": 1}),
+            patch.object(revisit, "_persist_summary"),
+        ):
+            rc = revisit._run(args)
+
+        self.assertEqual(rc, 0)
+        direct.assert_called_once_with("https://x.com/me/status/10")
+        scan.assert_not_called()
 
 
 class ParseRecordTimeTests(unittest.TestCase):

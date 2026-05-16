@@ -139,6 +139,14 @@ def main() -> int:
                     enqueue_scheduled_job("post", next_post_run_at)
                 next_post_run_at = next_proactive_after(now)
             elif (
+                in_revisit_window(now)
+                and now >= next_revisit_at
+                and (next_run_at - now).total_seconds() > revisit_guard_seconds()
+                and (next_post_run_at - now).total_seconds() > revisit_guard_seconds()
+            ):
+                enqueue_scheduled_job("revisit", next_revisit_at)
+                next_revisit_at = next_revisit_after(now)
+            elif (
                 learning_enabled()
                 and now >= next_learn_at
                 and (next_run_at - now).total_seconds() > learning_guard_seconds()
@@ -154,15 +162,6 @@ def main() -> int:
             ):
                 enqueue_scheduled_job("hotspot", next_hotspot_at)
                 next_hotspot_at = next_hotspot_after(now)
-            elif (
-                in_revisit_window(now)
-                and now >= next_revisit_at
-                and (next_run_at - now).total_seconds() > revisit_guard_seconds()
-                and (next_post_run_at - now).total_seconds() > revisit_guard_seconds()
-            ):
-                enqueue_scheduled_job("revisit", next_revisit_at)
-                next_revisit_at = next_revisit_after(now)
-
             try:
                 runner.tick(now)
             except Exception as exc:

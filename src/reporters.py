@@ -145,9 +145,9 @@ def count_scheduled_posts(date_str: str) -> int:
 
 def post_daily_limit() -> int:
     try:
-        return max(1, int(os.environ.get("X_POST_DAILY_LIMIT", "2")))
+        return max(1, int(os.environ.get("X_POST_DAILY_LIMIT", "4")))
     except ValueError:
-        return 2
+        return 4
 
 
 def post_summary(next_post_run_at: datetime) -> str:
@@ -217,8 +217,11 @@ def _revisit_record_eligible(rec: dict, kind: str) -> bool:
         rc = rec.get("send_returncode")
         if rc is None or int(rc) != 0:
             return False
+        if not str(rec.get("reply_url") or "").strip():
+            return False
         if not (rec.get("reply_text") or rec.get("reply") or "").strip():
             return False
+        return bool(rec.get("reply_url"))
     return bool(rec.get("post_url"))
 
 
@@ -344,16 +347,14 @@ def hotspot_summary(next_hotspot_at: datetime) -> str:
 
 
 def maybe_send_revisit_report(now: datetime, run_proc: subprocess.Popen[str] | None) -> None:
-    """Once per night, after revisits have run, push a 24h engagement digest."""
+    """After the midnight revisit has run, push a 24h engagement digest."""
     if not telegram_enabled() or (run_proc and run_proc.poll() is None):
         return
     if not in_revisit_window(now):
         return
 
     state = load_json(REVISIT_REPORT_STATE_PATH, {"last_reported_window": ""})
-    # The window key spans midnight: a 23:30 fire and a 03:00 fire on the
-    # next calendar day belong to the same window. Anchor to the date the
-    # window started.
+    # Revisit now runs in the 00:00 hour; the report key is that Beijing date.
     window_start_date = (now if now.hour >= REVISIT_WINDOW_START_HOUR else now - timedelta(days=1)).strftime("%Y-%m-%d")
     if state.get("last_reported_window") == window_start_date:
         return

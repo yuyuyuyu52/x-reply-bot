@@ -26,14 +26,15 @@ python3 sync_tg_commands.py      # push the /run /status /post_* /learn_* /revis
 Background daemon (long-running, schedules all three job types):
 
 ```bash
-bash start_bot.sh    # tmux session "x-reply-bot" running bot_daemon.py
-bash status_bot.sh
-bash stop_bot.sh
+sudo bash scripts/install_systemd.sh   # install and start x-reply-bot.service
+bash scripts/start_bot.sh
+bash scripts/status_bot.sh
+bash scripts/stop_bot.sh
 bash scheduled_run.sh [--no-jitter]   # one cron-style run; alternative to the daemon
 bash install_cron.sh / uninstall_cron.sh   # install/remove the hourly cron job
 ```
 
-Note: the shell scripts derive the repo root from their own location via `scripts/_common.sh` (which also loads `.env` without overriding parent-shell vars), so they work in any deployment directory — no more hardcoded `/home/will/...`. They still assume `tmux` + `flock` on the daemon host (Linux production); on macOS dev machines they will fail at the first `tmux`/`flock` call, which is fine since you generally only run individual Python entrypoints there. Override `X_REPLY_PYTHON`, `X_REPLY_TMUX_SESSION`, `X_REPLY_TZ`, or `BROWSER_HARNESS_BIN` in `.env` when the defaults don't match the host.
+Note: the shell scripts derive the repo root from their own location via `scripts/_common.sh` (which also loads `.env` without overriding parent-shell vars), so they work in any deployment directory — no more hardcoded `/home/will/...`. Production daemon lifecycle uses systemd (`x-reply-bot.service`) on Linux; on macOS dev machines, run individual Python entrypoints instead of installing the daemon. Override `X_REPLY_PYTHON`, `X_REPLY_SYSTEMD_SERVICE`, `X_REPLY_SYSTEMD_USER`, `X_REPLY_TZ`, or `BROWSER_HARNESS_BIN` in `.env` when the defaults don't match the host.
 
 There is no test suite, no linter, and no build step. `__pycache__/` is the only build artifact.
 

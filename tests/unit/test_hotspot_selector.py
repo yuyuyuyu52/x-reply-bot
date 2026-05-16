@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -148,6 +149,22 @@ def test_pick_best_returns_none_when_llm_index_out_of_range(monkeypatch):
                                 "cost": {}, "usage": {}})
     )
     assert selector.pick_best() is None
+
+
+def test_pick_best_logs_non_int_best_index_at_debug(monkeypatch, caplog):
+    row = _row(cn_summary="truncated summary ...")
+    monkeypatch.setattr(selector.store, "unposted_candidates_within", lambda *a, **k: [row])
+    monkeypatch.setattr(selector.store, "posted_today_summaries", lambda: [])
+    monkeypatch.setattr(
+        selector,
+        "chat_json_result",
+        MagicMock(return_value={"payload": {"best_index": "...", "reason": "noisy"}, "cost": {}, "usage": {}})
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert selector.pick_best() is None
+
+    assert "non-int best_index" not in caplog.text
 
 
 def test_pick_best_returns_none_when_llm_raises(monkeypatch):

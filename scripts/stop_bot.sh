@@ -5,11 +5,20 @@ source "$(dirname "$0")/_common.sh"
 
 cd "$X_REPLY_ROOT"
 
-if tmux has-session -t "$X_REPLY_TMUX_SESSION" 2>/dev/null; then
-  tmux kill-session -t "$X_REPLY_TMUX_SESSION"
-  echo "stopped bot: session=$X_REPLY_TMUX_SESSION"
-else
-  echo "bot not running"
+if ! command -v systemctl >/dev/null 2>&1; then
+  echo "systemctl not found; production daemon management requires systemd"
+  exit 2
 fi
 
-rm -f state/bot.pid
+if ! systemctl cat "$X_REPLY_SYSTEMD_SERVICE" >/dev/null 2>&1; then
+  echo "systemd service not installed: $X_REPLY_SYSTEMD_SERVICE"
+  echo "install with: sudo bash \"$X_REPLY_ROOT/scripts/install_systemd.sh\""
+  exit 2
+fi
+
+if [[ "${EUID}" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+  sudo systemctl stop "$X_REPLY_SYSTEMD_SERVICE"
+else
+  systemctl stop "$X_REPLY_SYSTEMD_SERVICE"
+fi
+echo "stopped bot: service=$X_REPLY_SYSTEMD_SERVICE"

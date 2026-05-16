@@ -31,6 +31,8 @@ omitted unless they alter how the bot is configured or operated.
 - Feedback scores injected into reply and post generation prompts as style reference
 
 ### Changed
+- Manage the production daemon with systemd instead of tmux
+- Lower noisy hotspot selector invalid-index payload logs to debug
 - Run 24h revisit once per night at Beijing 00:00 and allow scheduled replies during all other hours
 - Raise default proactive posting to four slots per day
 - Tighten reply generation style rules for shorter, more peer-like X/Twitter replies
@@ -43,6 +45,7 @@ omitted unless they alter how the bot is configured or operated.
 - Limit Product Hunt hotspot candidates to the latest 24h launches
 
 ### Fixed
+- Fix reply URL resolution after sending replies and report daemon lifecycle through systemd
 - Skip old reply records without `reply_url` during 24h revisit instead of scanning original threads
 - Record each sent reply URL for direct 24h revisit while keeping the original post URL in reply de-duplication
 - Enforce reply language from the main post so English posts do not get Chinese replies

@@ -37,6 +37,8 @@ def test_return_reply_url_still_records_original_post_for_dedup(monkeypatch):
 
     def fake_run_harness(code):
         assert "return_reply_url = True" in code
+        assert "reply[:40]" not in code
+        assert "reply_text[:40]" in code
         compile(code, "<send-reply-harness>", "exec")
         return '{"ok": true}\nREPLY_URL: https://x.com/me/status/456\n'
 

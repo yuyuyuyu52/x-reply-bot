@@ -4,24 +4,22 @@ set -euo pipefail
 source "$(dirname "$0")/_common.sh"
 
 cd "$X_REPLY_ROOT"
-mkdir -p state/logs
 
-if tmux has-session -t "$X_REPLY_TMUX_SESSION" 2>/dev/null; then
-  echo "bot already running: session=$X_REPLY_TMUX_SESSION"
-  exit 0
+if ! command -v systemctl >/dev/null 2>&1; then
+  echo "systemctl not found; production daemon management requires systemd"
+  exit 2
 fi
 
-rm -f state/bot.pid
-tmux new-session -d -s "$X_REPLY_TMUX_SESSION" \
-  "cd '$X_REPLY_ROOT' && exec '$X_REPLY_PYTHON' '$X_REPLY_ROOT/bot_daemon.py' >> '$X_REPLY_ROOT/state/logs/bot.log' 2>&1"
-sleep 1
+if ! systemctl cat "$X_REPLY_SYSTEMD_SERVICE" >/dev/null 2>&1; then
+  echo "systemd service not installed: $X_REPLY_SYSTEMD_SERVICE"
+  echo "install with: sudo bash \"$X_REPLY_ROOT/scripts/install_systemd.sh\""
+  exit 2
+fi
 
-if tmux has-session -t "$X_REPLY_TMUX_SESSION" 2>/dev/null; then
-  pid="$(tmux list-panes -t "$X_REPLY_TMUX_SESSION" -F '#{pane_pid}' | head -n 1)"
-  echo "$pid" > state/bot.pid
-  echo "started bot: session=$X_REPLY_TMUX_SESSION pid=$pid"
+if [[ "${EUID}" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+  sudo systemctl start "$X_REPLY_SYSTEMD_SERVICE"
 else
-  rm -f state/bot.pid
-  echo "failed to start bot"
-  exit 1
+  systemctl start "$X_REPLY_SYSTEMD_SERVICE"
 fi
+systemctl is-active --quiet "$X_REPLY_SYSTEMD_SERVICE"
+echo "started bot: service=$X_REPLY_SYSTEMD_SERVICE"

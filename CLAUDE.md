@@ -26,14 +26,15 @@ python3 sync_tg_commands.py      # push the /run /status /post_* /learn_* comman
 Background daemon (long-running, schedules all three job types):
 
 ```bash
-bash start_bot.sh    # tmux session "x-reply-bot" running bot_daemon.py
-bash status_bot.sh
-bash stop_bot.sh
+sudo bash scripts/install_systemd.sh   # install and start x-reply-bot.service
+bash scripts/start_bot.sh
+bash scripts/status_bot.sh
+bash scripts/stop_bot.sh
 bash scheduled_run.sh [--no-jitter]   # one cron-style run; alternative to the daemon
 bash install_cron.sh / uninstall_cron.sh   # install/remove the hourly cron job
 ```
 
-Note: the shell scripts contain hardcoded Linux paths (`/home/will/x-reply-bot`, `/home/will/.local/bin/browser-harness`, `/home/will/Developer/browser-harness`) and assume `tmux` + `flock` are available. They will not run as-is on macOS — treat them as deployment scripts for the production host. The Python scripts work cross-platform as long as the harness binary and CDP endpoint are reachable.
+Note: the shell scripts derive the repo root from their own location via `scripts/_common.sh` (which also loads `.env` without overriding parent-shell vars), so they work in any deployment directory. Production daemon lifecycle uses systemd (`x-reply-bot.service`) on Linux; on macOS dev machines, run individual Python entrypoints instead of installing the daemon. Override `X_REPLY_PYTHON`, `X_REPLY_SYSTEMD_SERVICE`, `X_REPLY_SYSTEMD_USER`, `X_REPLY_TZ`, or `BROWSER_HARNESS_BIN` in `.env` when the defaults don't match the host.
 
 There is no test suite, no linter, and no build step. `__pycache__/` is the only build artifact.
 

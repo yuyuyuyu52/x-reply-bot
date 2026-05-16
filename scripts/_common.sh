@@ -32,9 +32,13 @@ export X_REPLY_ROOT
 : "${X_REPLY_PYTHON:=python3}"
 export X_REPLY_PYTHON
 
-# tmux session name for daemon lifecycle scripts.
-: "${X_REPLY_TMUX_SESSION:=x-reply-bot}"
-export X_REPLY_TMUX_SESSION
+# systemd unit name for daemon lifecycle scripts.
+: "${X_REPLY_SYSTEMD_SERVICE:=x-reply-bot.service}"
+case "$X_REPLY_SYSTEMD_SERVICE" in
+  *.service) ;;
+  *) X_REPLY_SYSTEMD_SERVICE="${X_REPLY_SYSTEMD_SERVICE}.service" ;;
+esac
+export X_REPLY_SYSTEMD_SERVICE
 
 # Load .env without overriding already-set vars (mirrors common.load_env_file()).
 if [[ -f "${X_REPLY_ROOT}/.env" ]]; then

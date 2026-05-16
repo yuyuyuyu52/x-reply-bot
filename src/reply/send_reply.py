@@ -210,7 +210,7 @@ document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.href || ''
   }}
   return '';
 }})()
-''' % json.dumps(reply[:40], ensure_ascii=False)) or ''
+''' % json.dumps(reply_text[:40], ensure_ascii=False)) or ''
             if not reply_url:
                 wait(3)
                 reply_url = js('''
@@ -236,7 +236,7 @@ document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.href || ''
   }}
   return '';
 }})()
-''' % json.dumps(reply[:40], ensure_ascii=False)) or ''
+''' % json.dumps(reply_text[:40], ensure_ascii=False)) or ''
     like_ok = like_result.get('ok') if 'like_result' in dir() else None
     if like_ok is not None:
         print(json.dumps({{'like': like_result}}, ensure_ascii=False))

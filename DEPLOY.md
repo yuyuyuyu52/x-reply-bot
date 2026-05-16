@@ -15,7 +15,7 @@
 
 项目现在提供浏览器依赖自动安装脚本，会尽量安装：
 
-- `git` / `python3` / `tmux` / `util-linux`
+- `git` / `python3` / `util-linux` / systemd
 - Chrome
 - `uv`
 - `browser-harness`
@@ -178,6 +178,7 @@ python3 sync_tg_commands.py
 启动后台 bot：
 
 ```bash
+sudo bash scripts/install_systemd.sh
 bash scripts/start_bot.sh
 ```
 
@@ -190,7 +191,7 @@ bash scripts/status_bot.sh
 查看日志：
 
 ```bash
-tail -f state/logs/bot.log
+journalctl -u x-reply-bot.service -f
 ```
 
 停止 bot：
@@ -288,6 +289,12 @@ git push
 - 重启 bot
 - 检查 bot 是否重新运行
 - 成功或失败都发 Telegram 通知
+
+systemd 模式下，`/update` 和 `/config` 的自动重启会调用
+`scripts/stop_bot.sh` / `scripts/start_bot.sh`，也就是 `systemctl
+stop/start x-reply-bot.service`。如果服务用户没有 systemctl 权限，这两类
+Telegram 命令会在重启阶段失败；可以改为手动在服务器执行更新，或给服务用户
+配置仅限该 service 的免密 systemctl 权限。
 
 更新日志在：
 

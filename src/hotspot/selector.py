@@ -148,7 +148,7 @@ def pick_best(now: datetime | None = None) -> dict | None:
     try:
         idx = int(payload.get("best_index"))
     except (TypeError, ValueError):
-        logger.warning("selector: LLM returned non-int best_index: %r", payload)
+        logger.debug("selector: LLM returned non-int best_index: %r", payload)
         return None
 
     if idx == -1:

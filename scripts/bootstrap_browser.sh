@@ -41,12 +41,12 @@ install_linux_packages() {
     return
   fi
   if ! command -v apt-get >/dev/null 2>&1; then
-    echo "apt-get not found; install git, curl, python3, tmux, util-linux, and Chrome/Chromium manually"
+    echo "apt-get not found; install git, curl, python3, util-linux, and Chrome/Chromium manually"
     return
   fi
 
   sudo_cmd apt-get update
-  sudo_cmd apt-get install -y ca-certificates curl git python3 tmux util-linux
+  sudo_cmd apt-get install -y ca-certificates curl git python3 util-linux
 
   if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1 || command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1; then
     return

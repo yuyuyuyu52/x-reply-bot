@@ -38,7 +38,7 @@ restore_env() {
 }
 
 bot_running() {
-  tmux has-session -t "$X_REPLY_TMUX_SESSION" 2>/dev/null
+  bash "$X_REPLY_ROOT/scripts/status_bot.sh" >/dev/null 2>&1
 }
 
 on_error() {

@@ -110,7 +110,7 @@ class ConfigManagerTests(unittest.TestCase):
         self.assertIn("# keep this comment", content)
 
     def test_process_control_vars_are_not_telegram_configurable(self):
-        for key in ["X_REPLY_PYTHON", "X_REPLY_TMUX_SESSION"]:
+        for key in ["X_REPLY_PYTHON", "X_REPLY_SYSTEMD_SERVICE", "X_REPLY_SYSTEMD_USER"]:
             with self.assertRaises(KeyError):
                 self.cm.get_spec(key)
 

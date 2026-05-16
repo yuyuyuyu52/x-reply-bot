@@ -44,6 +44,7 @@ First-time server setup: [DEPLOY.md](DEPLOY.md)
 
 ```bash
 cd /path/to/x-reply-bot   # wherever you cloned the repo
+sudo bash scripts/install_systemd.sh
 bash scripts/start_bot.sh
 ```
 
@@ -77,6 +78,11 @@ Stop it:
 cd /path/to/x-reply-bot   # wherever you cloned the repo
 bash scripts/stop_bot.sh
 ```
+
+The background daemon is managed by the Linux systemd service
+`x-reply-bot.service`. Use `journalctl -u x-reply-bot.service -f` for live
+logs. On macOS development machines, run the one-shot Python commands instead
+of installing the daemon.
 
 ## Step By Step
 
@@ -205,8 +211,7 @@ The optional cron schedule is:
 - `state/latest_post_run.json`: latest proactive post record
 - `state/post_history/`: proactive post archives
 - `state/screenshots/`: browser screenshots
-- `state/bot.pid`: background bot pid
-- `state/logs/bot.log`: background bot log
+- systemd journal: background bot logs (`journalctl -u x-reply-bot.service`)
 - `state/logs/cron.log`: scheduler log
 
 ## Notes
@@ -237,6 +242,6 @@ The optional cron schedule is:
 - Background daemon: `bot_daemon.py`
 - Proactive posting: `post_topics.py`, `post_generate.py`, `post_send.py`, `post_once.py`
 - Observation and learning: `src/learning/observe.py`, `src/learning/store.py`, `src/learning/revisit.py`
-- Start/stop/status: `start_bot.sh`, `stop_bot.sh`, `status_bot.sh`
+- Install/start/stop/status: `install_systemd.sh`, `start_bot.sh`, `stop_bot.sh`, `status_bot.sh`
 - Scheduler wrapper: `scheduled_run.sh`
 - Cron installer/removal: `install_cron.sh`, `uninstall_cron.sh`

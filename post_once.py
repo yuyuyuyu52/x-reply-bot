@@ -164,7 +164,10 @@ def main() -> int:
         }
 
         if not selected_candidate:
-            record["status"] = "dry_run_rejected" if args.dry_run else "skipped_no_candidate"
+            has_best = bool(best_candidate and best_candidate.get("text", "").strip())
+            record["status"] = "skipped_no_candidate"
+            if has_best:
+                record["status"] = "skipped_rewritten"
             if not args.dry_run and topic.get("_pool") in ("manual", "hotspot"):
                 postable_pool.mark_topic_used(
                     topic,
@@ -175,7 +178,9 @@ def main() -> int:
             write_json(post_history_path_for(stamp), record)
             notify_telegram(record, stamp, notify_text(record))
             print(json.dumps(record, ensure_ascii=False, indent=2))
-            return 0 if args.dry_run else 1
+            # skipped_rewritten means review caught a bad ending but rewrite
+            # produced a usable candidate — not a real failure
+            return 0 if (args.dry_run or has_best) else 1
 
         if args.dry_run:
             record["status"] = "dry_run_ready"

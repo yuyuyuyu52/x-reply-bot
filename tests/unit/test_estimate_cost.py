@@ -95,5 +95,42 @@ class EstimateCostTests(unittest.TestCase):
         self.assertAlmostEqual(result["total_cost"], 0.0063, places=8)
 
 
+class DeepSeekEstimateCostTests(unittest.TestCase):
+    def setUp(self):
+        self._prev_rate = os.environ.get("X_REPLY_USD_CNY_RATE")
+        os.environ["X_REPLY_USD_CNY_RATE"] = "7.2"
+
+    def tearDown(self):
+        if self._prev_rate is None:
+            os.environ.pop("X_REPLY_USD_CNY_RATE", None)
+        else:
+            os.environ["X_REPLY_USD_CNY_RATE"] = self._prev_rate
+
+    def test_deepseek_v4_flash_cache_miss_math(self):
+        result = estimate_cost(
+            {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000},
+            model="deepseek-v4-flash",
+        )
+        # ($0.14 input + $0.28 output) * 7.2 CNY/USD = 3.024 CNY.
+        self.assertAlmostEqual(result["total_cost"], 3.024, places=6)
+        self.assertEqual(result["currency"], "CNY")
+        self.assertEqual(result["model"], "deepseek-v4-flash")
+        self.assertAlmostEqual(result["input_per_million"], 1.008, places=6)
+        self.assertAlmostEqual(result["output_per_million"], 2.016, places=6)
+
+    def test_deepseek_v4_flash_uses_cache_hit_and_miss_tokens(self):
+        result = estimate_cost(
+            {
+                "prompt_tokens": 1_000_000,
+                "prompt_cache_hit_tokens": 250_000,
+                "prompt_cache_miss_tokens": 750_000,
+                "completion_tokens": 500_000,
+            },
+            model="deepseek-v4-flash",
+        )
+        # (0.25M*$0.0028 + 0.75M*$0.14 + 0.5M*$0.28) * 7.2 = 1.76904.
+        self.assertAlmostEqual(result["total_cost"], 1.76904, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

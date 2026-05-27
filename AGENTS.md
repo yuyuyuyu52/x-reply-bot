@@ -71,7 +71,7 @@ Almost everything imports from `common.py`:
 
 - **State paths**: all under `state/` (gitignored). `LATEST_RUN_PATH`, `HISTORY_DIR`, `POST_HISTORY_DIR`, `POST_TOPICS_PATH`, `TELEGRAM_STATE_PATH`, etc. — use these constants instead of rebuilding paths.
 - **LLM client**: `chat_text_result` / `chat_json_result` auto-switch between OpenAI-compatible and Anthropic-compatible based on whether `base_url()` contains `/anthropic`. `chat_json_result` retries with progressively stronger "output valid JSON" instructions if `parse_json_object` fails — relying on this is fine.
-- **Cost accounting**: `estimate_cost` knows pricing for `qwen3.5-flash` (tiered by prompt token count) and the `MiniMax-M2.x` family. Unknown models cost 0. Every record persisted to history includes `total_cost_cny`; the daily report aggregates from `state/history/`.
+- **Cost accounting**: `estimate_cost` knows pricing for `qwen3.5-flash` (tiered by prompt token count), `deepseek-v4-flash` (including cache hit/miss tokens), and the `MiniMax-M2.x` family. Unknown models cost 0. Every record persisted to history includes `total_cost_cny`; the daily report aggregates from `state/history/`.
 - **Browser harness**: `run_harness(code, timeout)` writes Python to `browser-harness` over stdin and retries up to 3 times on transport errors, calling `restart_harness_daemon` between attempts. The harness source is vendored at `vendor/browser-harness`, while the repo-local executable wrapper lives at `.bin/browser-harness`. The harness exposes globals like `goto`, `js`, `click`, `type_text`, `screenshot`, `page_info`, `list_tabs`, `new_tab`, `switch_tab`, `wait_for_load` — these are not Python imports, they're injected into the harness exec context. CDP endpoint is auto-resolved by trying `X_REPLY_CDP_URL` → `127.0.0.1:9222` → `10.0.0.175:9223`.
 - **Telegram**: `telegram_notify` / `telegram_set_commands` / `telegram_get_commands` — all no-op-ish (raise) when `X_REPLY_TG_BOT_TOKEN` + `X_REPLY_TG_CHAT_ID` aren't both set; callers gate with `telegram_enabled()`.
 - **Topic queue**: `load_post_topics` / `save_post_topics` / `next_pending_post_topic` / `mark_post_topic_status`. Topic types are constrained to `VALID_POST_TOPIC_TYPES` = `{news_react, story, argument, casual}`; `normalize_post_topic` coerces unknown types to `argument`.
@@ -93,6 +93,7 @@ If `x.com` changes DOM, the files that need updating are the harness scripts emb
 Optional behavior knobs (see README + LEARNING_MODE.md for full list):
 
 - `X_REPLY_CDP_URL`, `BROWSER_HARNESS_BIN` — point at non-default harness setup
+- `X_REPLY_DEEPSEEK_THINKING` (`disabled` default, or `enabled`), `X_REPLY_DEEPSEEK_REASONING_EFFORT` (`high|max`), `X_REPLY_USD_CNY_RATE` (default `7.2`) — DeepSeek V4 Flash options
 - `X_REPLY_JITTER_SECONDS` — reply-slot jitter (default 1800)
 - `X_POST_SCHEDULE_HOURS` (`09,13,17,21`), `X_POST_JITTER_SECONDS` (1800), `X_POST_DAILY_LIMIT` (4)
 - `X_LEARN_ENABLED` (1), `X_LEARN_INTERVAL_SECONDS` (900, min 300), `X_LEARN_GUARD_SECONDS` (600, min 60)

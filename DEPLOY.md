@@ -83,6 +83,19 @@ X_REPLY_MODEL="qwen3.5-flash"
 
 注意：`qwen3.5-flash` 中间有点，不能写成 `qwen3.5flash`。
 
+DeepSeek V4 Flash 示例：
+
+```bash
+X_REPLY_BASE_URL="https://api.deepseek.com"
+X_REPLY_API_KEY="你的 DeepSeek key"
+X_REPLY_MODEL="deepseek-v4-flash"
+X_REPLY_DEEPSEEK_THINKING="disabled"
+X_REPLY_DEEPSEEK_REASONING_EFFORT="high"
+X_REPLY_USD_CNY_RATE="7.2"
+```
+
+`X_REPLY_DEEPSEEK_THINKING` 默认为 `disabled`，适合短回复和 JSON 选择任务；需要思考模式时改为 `enabled`，并用 `X_REPLY_DEEPSEEK_REASONING_EFFORT=high|max` 控制强度。
+
 
 ## 二、首次安装
 
@@ -120,6 +133,15 @@ nano .env
 X_REPLY_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 X_REPLY_API_KEY="你的 key"
 X_REPLY_MODEL="qwen3.5-flash"
+```
+
+如果使用 DeepSeek V4 Flash，改成：
+
+```bash
+X_REPLY_BASE_URL="https://api.deepseek.com"
+X_REPLY_API_KEY="你的 DeepSeek key"
+X_REPLY_MODEL="deepseek-v4-flash"
+X_REPLY_DEEPSEEK_THINKING="disabled"
 ```
 
 如果要用 Telegram 控制，再填：
@@ -323,6 +345,8 @@ Telegram 支持直接查看和修改 `.env` 配置。
 
 ```text
 /config set X_REPLY_MODEL qwen3.5-flash
+/config set X_REPLY_DEEPSEEK_THINKING enabled
+/config set X_REPLY_DEEPSEEK_REASONING_EFFORT max
 ```
 
 bot 会返回一个确认 ID，再发送：

@@ -30,6 +30,34 @@ def provider_mode() -> str:
     return "openai"
 
 
+def is_deepseek_request(model: str | None = None, url: str | None = None) -> bool:
+    selected_model = (model or model_name()).strip().lower()
+    if selected_model.startswith(("deepseek-v4-", "deepseek-chat", "deepseek-reasoner")):
+        return True
+    host = urlparse((url or base_url()).strip().lower()).hostname or ""
+    return host == "api.deepseek.com"
+
+
+def deepseek_thinking_type() -> str:
+    raw = env_first("X_REPLY_DEEPSEEK_THINKING", default="disabled").strip().lower()
+    if raw in {"1", "true", "yes", "on", "enable", "enabled"}:
+        return "enabled"
+    return "disabled"
+
+
+def deepseek_reasoning_effort() -> str:
+    raw = env_first("X_REPLY_DEEPSEEK_REASONING_EFFORT", default="high").strip().lower()
+    return "max" if raw in {"max", "xhigh"} else "high"
+
+
+def usd_cny_rate() -> float:
+    try:
+        value = float(env_first("X_REPLY_USD_CNY_RATE", default="7.2"))
+    except ValueError:
+        return 7.2
+    return value if value > 0 else 7.2
+
+
 def should_retry_http_error(code: int, detail: str) -> bool:
     if code in {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}:
         return True
@@ -190,12 +218,19 @@ def _openai_completion(
         else:
             normalized_messages.insert(0, {"role": "user", "content": f"[System Instructions]\n{system_text}"})
 
+    selected_model = model_name()
     payload: dict = {
-        "model": model_name(),
+        "model": selected_model,
         "messages": normalized_messages,
         "temperature": temperature,
-        "reasoning_split": True,
     }
+    if is_deepseek_request(selected_model):
+        thinking_type = deepseek_thinking_type()
+        payload["thinking"] = {"type": thinking_type}
+        if thinking_type == "enabled":
+            payload["reasoning_effort"] = deepseek_reasoning_effort()
+    else:
+        payload["reasoning_split"] = True
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
     return post_json_with_retries(
@@ -282,11 +317,26 @@ def extract_usage(data: dict) -> dict:
         or usage.get("totalTokens")
         or (prompt_tokens + completion_tokens)
     )
-    return {
+    result = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
     }
+    optional_int_fields = {
+        "prompt_cache_hit_tokens": (
+            usage.get("prompt_cache_hit_tokens")
+            or usage.get("promptCacheHitTokens")
+            or (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+        ),
+        "prompt_cache_miss_tokens": (
+            usage.get("prompt_cache_miss_tokens")
+            or usage.get("promptCacheMissTokens")
+        ),
+    }
+    for key, value in optional_int_fields.items():
+        if value is not None:
+            result[key] = int(value or 0)
+    return result
 
 
 def qwen35_flash_rates(prompt_tokens: int) -> dict:
@@ -301,6 +351,7 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
     prompt_tokens = int(usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or 0)
     selected_model = (model or model_name()).strip()
+    selected_model_lower = selected_model.lower()
 
     # Match versioned names like ``qwen3.5-flash-20250413`` or
     # ``MiniMax-M2.7-20250930``. Server returns a date-suffixed model id;
@@ -322,6 +373,29 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
         rates = qwen35_flash_rates(prompt_tokens)
         input_cost = prompt_tokens / 1_000_000 * rates["input_per_million"]
         output_cost = completion_tokens / 1_000_000 * rates["output_per_million"]
+    elif selected_model_lower.startswith(("deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner")):
+        rate = usd_cny_rate()
+        cache_hit_per_million = 0.0028 * rate
+        cache_miss_per_million = 0.14 * rate
+        output_per_million = 0.28 * rate
+        cache_hit_tokens = int(usage.get("prompt_cache_hit_tokens") or 0)
+        if "prompt_cache_miss_tokens" in usage:
+            cache_miss_tokens = int(usage.get("prompt_cache_miss_tokens") or 0)
+        elif cache_hit_tokens:
+            cache_miss_tokens = max(prompt_tokens - cache_hit_tokens, 0)
+        else:
+            cache_miss_tokens = prompt_tokens
+        rates = {
+            "input_per_million": cache_miss_per_million,
+            "output_per_million": output_per_million,
+            "input_cache_hit_per_million": cache_hit_per_million,
+            "input_cache_miss_per_million": cache_miss_per_million,
+        }
+        input_cost = (
+            cache_hit_tokens / 1_000_000 * cache_hit_per_million
+            + cache_miss_tokens / 1_000_000 * cache_miss_per_million
+        )
+        output_cost = completion_tokens / 1_000_000 * output_per_million
     elif selected_model.startswith(highspeed_prefixes):
         # NOTE: order matters — must test ``-highspeed`` suffixes before the
         # bare ``MiniMax-M2.x`` prefixes below, otherwise highspeed variants
@@ -339,7 +413,7 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
         output_cost = 0.0
 
     total_cost = input_cost + output_cost
-    return {
+    result = {
         "currency": "CNY",
         "model": selected_model,
         "input_per_million": rates["input_per_million"],
@@ -348,6 +422,10 @@ def estimate_cost(usage: dict, model: str | None = None) -> dict:
         "output_cost": round(output_cost, 8),
         "total_cost": round(total_cost, 8),
     }
+    if "input_cache_hit_per_million" in rates:
+        result["input_cache_hit_per_million"] = round(rates["input_cache_hit_per_million"], 8)
+        result["input_cache_miss_per_million"] = round(rates["input_cache_miss_per_million"], 8)
+    return result
 
 
 def chat_text_result(

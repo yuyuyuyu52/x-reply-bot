@@ -103,6 +103,18 @@ class ConfigManagerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.cm.stage_or_apply_config("X_HOTSPOT_SCHEDULE_TIME", "25:00", apply_func=lambda *_: None)
 
+    def test_deepseek_thinking_validation_normalizes_values(self):
+        self.cm.stage_or_apply_config("X_REPLY_DEEPSEEK_THINKING", "ENABLED", apply_func=lambda *_: None)
+        self.assertIn('X_REPLY_DEEPSEEK_THINKING="enabled"', self.env_path.read_text(encoding="utf-8"))
+
+    def test_deepseek_reasoning_effort_validation_rejects_invalid_value(self):
+        with self.assertRaises(ValueError):
+            self.cm.stage_or_apply_config("X_REPLY_DEEPSEEK_REASONING_EFFORT", "turbo", apply_func=lambda *_: None)
+
+    def test_usd_cny_rate_uses_float_validation(self):
+        self.cm.stage_or_apply_config("X_REPLY_USD_CNY_RATE", "7.2", apply_func=lambda *_: None)
+        self.assertIn('X_REPLY_USD_CNY_RATE="7.2"', self.env_path.read_text(encoding="utf-8"))
+
     def test_unset_removes_active_key_and_preserves_comment(self):
         self.cm.unset_config("X_POST_DAILY_LIMIT", apply_func=lambda *_: None)
         content = self.env_path.read_text(encoding="utf-8")

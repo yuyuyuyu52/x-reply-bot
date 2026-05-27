@@ -18,6 +18,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -73,11 +74,110 @@ class ProviderModeTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _openai_completion provider payloads
+# ---------------------------------------------------------------------------
+
+
+class OpenAICompletionPayloadTests(unittest.TestCase):
+    ENV_KEYS = (
+        "X_REPLY_BASE_URL",
+        "X_REPLY_MODEL",
+        "X_REPLY_API_KEY",
+        "X_REPLY_DEEPSEEK_THINKING",
+        "X_REPLY_DEEPSEEK_REASONING_EFFORT",
+    )
+
+    def setUp(self):
+        self._prev = {key: os.environ.get(key) for key in self.ENV_KEYS}
+
+    def tearDown(self):
+        for key, value in self._prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def _capture_openai_payload(self) -> dict:
+        captured: dict = {}
+
+        def fake_post(url, payload, headers, *, label):
+            captured["url"] = url
+            captured["payload"] = payload
+            captured["headers"] = headers
+            captured["label"] = label
+            return {
+                "id": "test-response",
+                "model": payload["model"],
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+
+        with patch("src.llm.post_json_with_retries", side_effect=fake_post):
+            llm._openai_completion(
+                [{"role": "user", "content": "hello"}],
+                temperature=0.2,
+                max_tokens=128,
+            )
+        return captured
+
+    def test_deepseek_v4_flash_defaults_to_disabled_thinking(self):
+        os.environ["X_REPLY_BASE_URL"] = "https://api.deepseek.com"
+        os.environ["X_REPLY_MODEL"] = "deepseek-v4-flash"
+        os.environ["X_REPLY_API_KEY"] = "test-key"
+        os.environ.pop("X_REPLY_DEEPSEEK_THINKING", None)
+        os.environ.pop("X_REPLY_DEEPSEEK_REASONING_EFFORT", None)
+
+        captured = self._capture_openai_payload()
+
+        payload = captured["payload"]
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", payload)
+        self.assertNotIn("reasoning_split", payload)
+
+    def test_deepseek_v4_flash_can_enable_thinking_with_reasoning_effort(self):
+        os.environ["X_REPLY_BASE_URL"] = "https://api.deepseek.com"
+        os.environ["X_REPLY_MODEL"] = "deepseek-v4-flash"
+        os.environ["X_REPLY_API_KEY"] = "test-key"
+        os.environ["X_REPLY_DEEPSEEK_THINKING"] = "enabled"
+        os.environ["X_REPLY_DEEPSEEK_REASONING_EFFORT"] = "max"
+
+        captured = self._capture_openai_payload()
+
+        payload = captured["payload"]
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+        self.assertEqual(payload["reasoning_effort"], "max")
+        self.assertNotIn("reasoning_split", payload)
+
+    def test_non_deepseek_openai_payload_keeps_reasoning_split(self):
+        os.environ["X_REPLY_BASE_URL"] = "https://api.minimaxi.com/v1"
+        os.environ["X_REPLY_MODEL"] = "MiniMax-M2.7"
+        os.environ["X_REPLY_API_KEY"] = "test-key"
+        os.environ["X_REPLY_DEEPSEEK_THINKING"] = "enabled"
+
+        captured = self._capture_openai_payload()
+
+        payload = captured["payload"]
+        self.assertEqual(payload["reasoning_split"], True)
+        self.assertNotIn("thinking", payload)
+        self.assertNotIn("reasoning_effort", payload)
+
+
+# ---------------------------------------------------------------------------
 # estimate_cost — versioned model name regressions
 # ---------------------------------------------------------------------------
 
 
 class EstimateCostVersionedTests(unittest.TestCase):
+    def setUp(self):
+        self._prev_rate = os.environ.get("X_REPLY_USD_CNY_RATE")
+        os.environ["X_REPLY_USD_CNY_RATE"] = "7.2"
+
+    def tearDown(self):
+        if self._prev_rate is None:
+            os.environ.pop("X_REPLY_USD_CNY_RATE", None)
+        else:
+            os.environ["X_REPLY_USD_CNY_RATE"] = self._prev_rate
+
     def test_qwen_versioned_name_matches_bare(self):
         bare = llm.estimate_cost(
             {"prompt_tokens": 1000, "completion_tokens": 100},
@@ -139,6 +239,44 @@ class EstimateCostVersionedTests(unittest.TestCase):
         self.assertEqual(result["model"], "claude-sonnet-4-5-20250930")
         self.assertEqual(result["input_per_million"], 0.0)
         self.assertEqual(result["output_per_million"], 0.0)
+
+    def test_deepseek_v4_flash_versioned_name_matches_bare(self):
+        bare = llm.estimate_cost(
+            {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000},
+            model="deepseek-v4-flash",
+        )
+        versioned = llm.estimate_cost(
+            {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000},
+            model="deepseek-v4-flash-20260424",
+        )
+        self.assertGreater(bare["total_cost"], 0.0)
+        self.assertEqual(bare["total_cost"], versioned["total_cost"])
+        self.assertEqual(versioned["model"], "deepseek-v4-flash-20260424")
+
+
+# ---------------------------------------------------------------------------
+# extract_usage
+# ---------------------------------------------------------------------------
+
+
+class ExtractUsageTests(unittest.TestCase):
+    def test_deepseek_cache_token_fields_are_preserved(self):
+        result = llm.extract_usage(
+            {
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 10,
+                    "total_tokens": 110,
+                    "prompt_cache_hit_tokens": 70,
+                    "prompt_cache_miss_tokens": 30,
+                }
+            }
+        )
+        self.assertEqual(result["prompt_tokens"], 100)
+        self.assertEqual(result["completion_tokens"], 10)
+        self.assertEqual(result["total_tokens"], 110)
+        self.assertEqual(result["prompt_cache_hit_tokens"], 70)
+        self.assertEqual(result["prompt_cache_miss_tokens"], 30)
 
 
 # ---------------------------------------------------------------------------

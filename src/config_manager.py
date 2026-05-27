@@ -49,6 +49,9 @@ CONFIG_SPECS: dict[str, ConfigSpec] = {
         _spec("X_REPLY_BASE_URL", "LLM", "LLM API 地址", kind="url", sensitive=True, default="https://api.minimaxi.com/v1"),
         _spec("X_REPLY_API_KEY", "LLM", "LLM API Key", sensitive=True),
         _spec("X_REPLY_MODEL", "LLM", "LLM 模型", sensitive=True, default="MiniMax-M2.7"),
+        _spec("X_REPLY_DEEPSEEK_THINKING", "LLM", "DeepSeek Thinking 模式", kind="deepseek_thinking", default="disabled"),
+        _spec("X_REPLY_DEEPSEEK_REASONING_EFFORT", "LLM", "DeepSeek 推理强度", kind="deepseek_reasoning_effort", default="high"),
+        _spec("X_REPLY_USD_CNY_RATE", "LLM", "美元兑人民币估算汇率", kind="float", default="7.2", min_value=0),
         _spec("OPENAI_BASE_URL", "LLM", "OpenAI 兼容 API 地址", kind="url", sensitive=True),
         _spec("OPENAI_API_KEY", "LLM", "OpenAI API Key", sensitive=True),
         _spec("OPENAI_MODEL", "LLM", "OpenAI 模型", sensitive=True),
@@ -211,6 +214,20 @@ def validate_value(spec: ConfigSpec, value: str) -> str:
         if spec.min_value is not None and parsed < spec.min_value:
             raise ValueError(f"{spec.key} 不能小于 {spec.min_value}")
         return str(parsed)
+    if spec.kind == "deepseek_thinking":
+        lowered = value.lower()
+        if lowered in {"1", "true", "yes", "on", "enable", "enabled", "开", "开启"}:
+            return "enabled"
+        if lowered in {"0", "false", "no", "off", "disable", "disabled", "关", "关闭"}:
+            return "disabled"
+        raise ValueError(f"{spec.key} 只支持 enabled 或 disabled")
+    if spec.kind == "deepseek_reasoning_effort":
+        lowered = value.lower()
+        if lowered in {"high", "max"}:
+            return lowered
+        if lowered == "xhigh":
+            return "max"
+        raise ValueError(f"{spec.key} 只支持 high 或 max")
     if spec.kind == "hours":
         hours: list[int] = []
         for part in value.split(","):

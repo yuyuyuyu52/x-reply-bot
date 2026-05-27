@@ -38,6 +38,17 @@ compatible mode with `qwen3.5-flash`.
 `qwen3.5-flash` is the official DashScope-compatible model name. `qwen3.5flash`
 will not match the documented model id.
 
+DeepSeek V4 Flash is also supported through the OpenAI-compatible API:
+
+```bash
+X_REPLY_BASE_URL="https://api.deepseek.com"
+X_REPLY_API_KEY="your DeepSeek key"
+X_REPLY_MODEL="deepseek-v4-flash"
+X_REPLY_DEEPSEEK_THINKING="disabled"          # default; set enabled to use thinking mode
+X_REPLY_DEEPSEEK_REASONING_EFFORT="high"      # high or max; only used when thinking is enabled
+X_REPLY_USD_CNY_RATE="7.2"                    # DeepSeek publishes USD prices; bot reports CNY estimates
+```
+
 ## Quick Start
 
 First-time server setup: [DEPLOY.md](DEPLOY.md)

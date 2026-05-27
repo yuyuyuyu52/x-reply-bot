@@ -24,6 +24,7 @@ omitted unless they alter how the bot is configured or operated.
 
 ### Added
 - Add a SQLite-backed job queue for daemon tasks with durable status, log files, timeout handling, and queue-aware Telegram status
+- Add DeepSeek V4 Flash configuration with selectable thinking mode and cost estimates
 - Add browser dependency bootstrap scripts for Chrome CDP and browser-harness deployment
 - Add /config Telegram commands to view, edit, confirm, apply, and rollback .env-based bot configuration
 - Add /update Telegram command to pull latest code, compile-check, restart, health-check, and report the result

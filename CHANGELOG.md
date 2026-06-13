@@ -32,6 +32,7 @@ omitted unless they alter how the bot is configured or operated.
 - Feedback scores injected into reply and post generation prompts as style reference
 
 ### Changed
+- Update README with current architecture, job data flow, and operator runbook
 - Manage the production daemon with systemd instead of tmux
 - Lower noisy hotspot selector invalid-index payload logs to debug
 - Run 24h revisit once per night at Beijing 00:00 and allow scheduled replies during all other hours
